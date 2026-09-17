@@ -1,0 +1,351 @@
+{% extends 'base.html' %}
+{% block title %}Monitor en vivo · Casino{% endblock %}
+{% block nav_monitor %}active{% endblock %}
+
+{% block content %}
+<style>
+  /* Track oscuro del DESIGN.md aplicado a la réplica de la pantalla del kiosco.
+     Los colores salen de los tokens; las proporciones se mantienen porque esta
+     vista se lee a distancia. Único desvío consciente del DESIGN.md: los pesos
+     grandes se quedan en 500 en vez de bajar a 300, porque el peso fino no
+     sostiene la lectura a distancia. .mon-wrap vive en design-system.css. */
+
+  .mon-head { background:var(--ds-dark-surface); border-bottom:1px solid var(--ds-dark-hairline); padding:var(--ds-space-lg) var(--ds-space-xl); }
+  .mon-head-row { display:flex; flex-wrap:wrap; gap:var(--ds-space-md); align-items:center; justify-content:space-between; }
+  .mon-status { display:inline-flex; align-items:center; gap:7px; font-size:var(--ds-label-size); text-transform:uppercase; letter-spacing:.1px;
+                padding:var(--ds-space-xs) var(--ds-space-md); border-radius:var(--ds-radius-pill); font-weight:400; }
+  .mon-status .dot { width:9px; height:9px; border-radius:50%; }
+  .mon-status.live { background:var(--ds-dark-success-bg); color:var(--ds-dark-success); }
+  .mon-status.live .dot { background:var(--ds-dark-success); animation:pulse 1.6s infinite; }
+  .mon-status.down { background:var(--ds-dark-danger-bg); color:var(--ds-dark-danger); }
+  .mon-status.down .dot { background:var(--ds-dark-danger); }
+  @keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(95,211,172,.6)} 70%{box-shadow:0 0 0 8px rgba(95,211,172,0)} 100%{box-shadow:0 0 0 0 rgba(95,211,172,0)} }
+
+  .mon-clock { text-align:right; line-height:1.15; }
+  .mon-clock .t { font-size:1.15rem; font-weight:500; font-feature-settings:"tnum"; letter-spacing:-.42px; }
+  .mon-clock .d { font-size:11px; color:var(--ds-dark-mute); }
+
+  /* Estado de turno por estación: es lo primero que hay que poder leer */
+  .mon-shifts { display:flex; flex-wrap:wrap; gap:var(--ds-space-sm); margin-top:10px; }
+  .shift-pill { display:inline-flex; align-items:center; gap:9px; padding:7px var(--ds-space-lg); border-radius:var(--ds-radius-pill);
+                font-size:.9rem; border:1px solid transparent; }
+  .shift-pill .sp-station { color:var(--ds-dark-mute); font-size:var(--ds-label-size); text-transform:uppercase; letter-spacing:.1px; }
+  .shift-pill.on  { background:var(--ds-dark-success-bg); border-color:var(--ds-dark-success); color:var(--ds-dark-success); }
+  .shift-pill.off { background:var(--ds-dark-danger-bg); border-color:var(--ds-dark-danger); color:var(--ds-dark-danger); font-weight:500; }
+  .shift-pill .sp-name { font-weight:500; }
+
+  .mon-stats { display:flex; gap:9px; flex-wrap:wrap; margin-top:11px; }
+  .mon-stat { background:var(--ds-dark-canvas); border:1px solid var(--ds-dark-hairline); border-radius:var(--ds-radius-md); padding:7px 15px; min-width:92px; }
+  .mon-stat .v { font-size:1.35rem; font-weight:500; line-height:1; font-feature-settings:"tnum"; letter-spacing:-.42px; }
+  .mon-stat .l { font-size:var(--ds-label-size); text-transform:uppercase; letter-spacing:.1px; color:var(--ds-dark-mute); margin-top:3px; }
+  .mon-stat .v.is-success { color:var(--ds-dark-success); }
+  .mon-stat .v.is-warning { color:var(--ds-dark-warning); }
+  .mon-stat .v.is-danger  { color:var(--ds-dark-danger); }
+  .mon-stat .v.is-info    { color:var(--ds-dark-info); }
+  .mon-stat .v.is-mute    { color:var(--ds-dark-mute); }
+
+  .mon-toolbar { display:flex; justify-content:space-between; align-items:center; gap:var(--ds-space-md); padding:var(--ds-space-md) var(--ds-space-xl) 0; }
+  .form-select-dark { background:var(--ds-dark-surface); color:var(--ds-dark-text); border-color:var(--ds-dark-hairline); }
+  .form-select-dark:focus { background:var(--ds-dark-surface); color:var(--ds-dark-text); border-color:var(--ds-primary-soft); box-shadow:none; }
+  .mon-hint { color:var(--ds-dark-mute); font-size:13px; letter-spacing:-.39px; }
+
+  /* ---- Tarjeta grande, una por fila: la misma anatomía que la card del kiosco ---- */
+  .mon-list { padding:var(--ds-space-lg) var(--ds-space-xl) var(--ds-space-xl); display:flex; flex-direction:column; gap:var(--ds-space-lg); }
+  .mon-card { background:var(--ds-dark-surface); border:1px solid var(--ds-dark-hairline); border-radius:var(--ds-radius-xl); overflow:hidden;
+              display:flex; align-items:stretch; min-height:180px; animation:slidein .35s ease; }
+  @keyframes slidein { from{opacity:0; transform:translateY(-8px)} to{opacity:1; transform:none} }
+  .mon-bar { width:6px; flex:0 0 auto; }
+  .mon-av { width:150px; height:150px; border-radius:var(--ds-radius-lg); background:var(--ds-dark-raised); align-self:center;
+            margin:0 var(--ds-space-lg) 0 22px; flex:0 0 auto; display:flex; align-items:center; justify-content:center;
+            font-weight:500; font-size:3.2rem; color:var(--ds-dark-mute); }
+  .mon-info { flex:1 1 auto; min-width:0; align-self:center; padding:18px 22px 18px 6px; }
+  .mon-visit { display:inline-block; font-size:var(--ds-label-size); font-weight:400; padding:var(--ds-space-xs) var(--ds-space-md);
+               border-radius:var(--ds-radius-pill); background:var(--ds-dark-info-bg); color:var(--ds-primary-subdued);
+               letter-spacing:.1px; text-transform:uppercase; margin-bottom:7px; }
+  .mon-name { font-size:1.75rem; font-weight:500; line-height:1.15; letter-spacing:-.64px; overflow-wrap:anywhere; }
+  .mon-company { font-size:1rem; color:var(--ds-dark-mute); margin-top:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .mon-chips { display:flex; gap:var(--ds-space-sm); align-items:center; flex-wrap:wrap; margin-top:11px; }
+  .mon-method { font-size:13px; padding:var(--ds-space-xs) var(--ds-space-md); border-radius:var(--ds-radius-pill);
+                background:var(--ds-dark-raised); color:var(--ds-dark-info); font-weight:400; }
+  .mon-method.nonface { background:var(--ds-dark-warning-bg); color:var(--ds-dark-warning); }
+  .mon-badge { font-size:var(--ds-label-size); font-weight:400; padding:var(--ds-space-xs) var(--ds-space-md);
+               border-radius:var(--ds-radius-pill); letter-spacing:.1px; text-transform:uppercase; }
+  .mon-detail { font-size:13px; margin-top:var(--ds-space-sm); overflow-wrap:anywhere; }
+  .mon-when { display:flex; align-items:baseline; gap:10px; margin-top:var(--ds-space-md); }
+  .mon-time { font-size:2.1rem; font-weight:500; line-height:1; font-feature-settings:"tnum"; letter-spacing:-.64px; }
+  .mon-date { font-size:13px; color:var(--ds-dark-mute); }
+  .mon-station { font-size:var(--ds-label-size); text-transform:uppercase; letter-spacing:.1px; color:var(--ds-dark-mute); margin-left:auto; align-self:flex-end; }
+
+  .mon-empty { text-align:center; color:var(--ds-dark-mute); padding:56px var(--ds-space-xl); font-size:1rem; }
+
+  @media (max-width: 700px) {
+    .mon-av { width:96px; height:96px; font-size:2.1rem; margin:0 var(--ds-space-md) 0 var(--ds-space-lg); }
+    .mon-name { font-size:1.3rem; letter-spacing:-.26px; }
+    .mon-time { font-size:1.6rem; letter-spacing:-.26px; }
+  }
+</style>
+
+<div class="mon-wrap">
+
+  <div class="mon-head">
+    <div class="mon-head-row">
+      <div class="d-flex align-items-center gap-3">
+        <h1 class="page-title"><i class="bi bi-broadcast"></i> Monitor en vivo</h1>
+        <span id="statusPill" class="mon-status down"><span class="dot"></span><span id="statusText">Conectando…</span></span>
+      </div>
+      <div class="mon-clock">
+        <div class="t" id="clockTime">--:--:--</div>
+        <div class="d" id="clockDate"></div>
+      </div>
+    </div>
+
+    <!-- Turno por estación: sin turno iniciado el kiosco no registra nada -->
+    <div class="mon-shifts" id="shiftBar">
+      <span class="mon-hint">Consultando turnos…</span>
+    </div>
+
+    <div class="mon-stats">
+      <div class="mon-stat"><div class="v is-success" id="cServed">0</div><div class="l">Colaciones hoy</div></div>
+      <div class="mon-stat"><div class="v is-warning" id="cDup">0</div><div class="l">Duplicados</div></div>
+      <div class="mon-stat"><div class="v is-mute" id="cSin">0</div><div class="l">Fuera de turno</div></div>
+      <div class="mon-stat"><div class="v is-danger" id="cNoAut">0</div><div class="l">No autorizados</div></div>
+      <div class="mon-stat"><div class="v is-info" id="cVis">0</div><div class="l">Visitas</div></div>
+    </div>
+  </div>
+
+  <div class="mon-toolbar">
+    <select id="stationFilter" class="form-select form-select-sm form-select-dark" style="width:auto;">
+      <option value="">Todas las estaciones</option>
+      {% for s in stations %}<option value="{{ s.pk }}">{{ s.name }}</option>{% endfor %}
+    </select>
+    <span class="mon-hint">Misma vista que el kiosco: la marcación más reciente arriba.</span>
+  </div>
+
+  <div id="grid" class="mon-list"></div>
+  <div id="empty" class="mon-empty"><i class="bi bi-hourglass-split"></i> Esperando marcaciones…</div>
+</div>
+
+<script>
+(function () {
+  const MAX = 200;
+  const SHIFTS_URL = "{% url 'webapp:monitor_shifts' %}";
+  const grid = document.getElementById('grid');
+  const emptyEl = document.getElementById('empty');
+  const stationFilter = document.getElementById('stationFilter');
+  const counts = { served: 0, duplicados: 0, sin_turno: 0, no_autorizados: 0, visitas: 0 };
+
+  // Los colores salen de los tokens del track oscuro del DESIGN.md; los
+  // textos siguen siendo los mismos que muestran las cards del kiosco.
+  const CSSVAR = function (n) { return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); };
+  const STATUS = {
+    'Ok':           { text:'COLACIÓN OK',    fg:CSSVAR('--ds-dark-success'), bg:CSSVAR('--ds-dark-success-bg') },
+    'Duplicado':    { text:'YA REGISTRADO',  fg:CSSVAR('--ds-dark-warning'), bg:CSSVAR('--ds-dark-warning-bg') },
+    'SinTurno':     { text:'FUERA DE TURNO', fg:CSSVAR('--ds-dark-mute'),    bg:CSSVAR('--ds-dark-raised') },
+    'NoAutorizado': { text:'NO AUTORIZADO',  fg:CSSVAR('--ds-dark-danger'),  bg:CSSVAR('--ds-dark-danger-bg') },
+  };
+
+  const DAYS = ['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
+  const MONTHS = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto',
+                  'septiembre','octubre','noviembre','diciembre'];
+
+  function pad(n) { return n < 10 ? '0' + n : '' + n; }
+  function tickClock() {
+    const d = new Date();
+    document.getElementById('clockTime').textContent = pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+    document.getElementById('clockDate').textContent =
+      DAYS[d.getDay()] + ' ' + d.getDate() + ' de ' + MONTHS[d.getMonth()] + ' de ' + d.getFullYear();
+  }
+  tickClock();
+  setInterval(tickClock, 1000);
+
+  function initials(name) {
+    const p = (name || '').split(' ').filter(Boolean);
+    if (!p.length) return '?';
+    if (p.length === 1) return p[0].substring(0, 2).toUpperCase();
+    return (p[0][0] + p[p.length - 1][0]).toUpperCase();
+  }
+  function isNonFace(m) {
+    m = (m || '').toLowerCase();
+    return m !== '' && !m.includes('rostro') && !m.includes('face');
+  }
+  function esc(s) { const d = document.createElement('div'); d.textContent = s == null ? '' : s; return d.innerHTML; }
+
+  function renderCounts() {
+    document.getElementById('cServed').textContent = counts.served;
+    document.getElementById('cDup').textContent = counts.duplicados;
+    document.getElementById('cSin').textContent = counts.sin_turno;
+    document.getElementById('cNoAut').textContent = counts.no_autorizados;
+    document.getElementById('cVis').textContent = counts.visitas;
+  }
+
+  function applyFilter(card) {
+    const f = stationFilter.value;
+    card.style.display = (!f || card.dataset.station === f) ? '' : 'none';
+  }
+
+  function clearList() {
+    grid.innerHTML = '';
+    emptyEl.style.display = '';
+  }
+
+  function addCard(ev, prepend) {
+    const st = Object.assign({}, STATUS[ev.status] || { text: ev.status, fg:CSSVAR('--ds-dark-mute'), bg:CSSVAR('--ds-dark-raised') });
+    if (ev.is_visitor && ev.status === 'Duplicado') st.text = 'TARJETA REPETIDA';
+    const nf = isNonFace(ev.verify_method);
+    const card = document.createElement('div');
+    card.className = 'mon-card';
+    card.style.borderColor = (ev.status === 'Duplicado') ? CSSVAR('--ds-dark-warning') : CSSVAR('--ds-dark-hairline');
+    card.dataset.station = ev.station_id != null ? String(ev.station_id) : '';
+    card.innerHTML =
+      '<div class="mon-bar" style="background:' + st.fg + '"></div>' +
+      '<div class="mon-av">' + esc(initials(ev.person_name)) + '</div>' +
+      '<div class="mon-info">' +
+        (ev.is_visitor ? '<div><span class="mon-visit">VISITA</span></div>' : '') +
+        '<div class="mon-name">' + esc(ev.person_name) + '</div>' +
+        '<div class="mon-company">' + esc(ev.company || 'Sin empresa registrada') + '</div>' +
+        '<div class="mon-chips">' +
+          (ev.verify_method ? '<span class="mon-method' + (nf ? ' nonface' : '') + '">' + esc(ev.verify_method) + '</span>' : '') +
+          '<span class="mon-badge" style="color:' + st.fg + ';background:' + st.bg + '">' + st.text + '</span>' +
+        '</div>' +
+        ((ev.detail && ev.status !== 'Ok') ? '<div class="mon-detail" style="color:' + st.fg + '">' + esc(ev.detail) + '</div>' : '') +
+        '<div class="mon-when">' +
+          '<span class="mon-time">' + esc(ev.time_text) + '</span>' +
+          '<span class="mon-date">' + esc(ev.date_text || '') + '</span>' +
+          (ev.station ? '<span class="mon-station">' + esc(ev.station) + '</span>' : '') +
+        '</div>' +
+      '</div>';
+    applyFilter(card);
+
+    if (prepend && grid.firstChild) grid.insertBefore(card, grid.firstChild);
+    else grid.appendChild(card);
+
+    while (grid.children.length > MAX) grid.removeChild(grid.lastChild);
+    emptyEl.style.display = grid.children.length ? 'none' : '';
+  }
+
+  function bumpCount(status, isVisitor) {
+    if (status === 'Ok' && isVisitor) counts.visitas++;
+    if (status === 'Ok') counts.served++;
+    else if (status === 'Duplicado') counts.duplicados++;
+    else if (status === 'SinTurno') counts.sin_turno++;
+    else if (status === 'NoAutorizado') counts.no_autorizados++;
+    renderCounts();
+  }
+
+  // ---- Estado de turno de cada estación ----
+  const shiftBar = document.getElementById('shiftBar');
+  let lastShifts = [];
+  let shiftKey = null;   // huella de los turnos abiertos: si cambia, la lista se limpia
+
+  function renderShifts() {
+    const f = stationFilter.value;
+    const rows = lastShifts.filter(function (s) { return !f || String(s.station_id) === f; });
+
+    // Al abrirse o cerrarse un turno la pantalla arranca limpia, igual que el kiosco.
+    const key = rows.map(function (s) {
+      return s.station_id + ':' + (s.active ? s.shift_name + '@' + s.started_text : '-');
+    }).join('|');
+    if (shiftKey !== null && shiftKey !== key) clearList();
+    shiftKey = key;
+
+    const anyActive = rows.some(function (s) { return s.active; });
+    emptyEl.innerHTML = anyActive
+      ? '<i class="bi bi-hourglass-split"></i> Esperando marcaciones…'
+      : '<i class="bi bi-exclamation-triangle"></i> <strong>Sin turno iniciado</strong>' +
+        '<div class="small mt-1">El kiosco no está registrando colaciones. Las marcaciones que lleguen se descartan.</div>';
+    emptyEl.style.display = grid.children.length ? 'none' : '';
+
+    if (!rows.length) { shiftBar.innerHTML = '<span class="text-secondary small">Sin estaciones registradas.</span>'; return; }
+    shiftBar.innerHTML = rows.map(function (s) {
+      if (s.active) {
+        return '<span class="shift-pill on"><span class="sp-station">' + esc(s.station) + '</span>' +
+               '<span class="sp-name">' + esc(s.shift_name) + '</span>' +
+               '<span>· desde ' + esc(s.started_text) + '</span></span>';
+      }
+      return '<span class="shift-pill off"><span class="sp-station">' + esc(s.station) + '</span>' +
+             '<span class="sp-name">SIN TURNO INICIADO</span></span>';
+    }).join('');
+  }
+
+  function loadShifts() {
+    fetch(SHIFTS_URL, { credentials: 'same-origin' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) { if (d && d.shifts) { lastShifts = d.shifts; renderShifts(); } })
+      .catch(function () { /* el monitor sigue vivo aunque falle esta consulta */ });
+  }
+  loadShifts();
+  setInterval(loadShifts, 15000);
+
+  stationFilter.addEventListener('change', function () {
+    Array.prototype.forEach.call(grid.children, applyFilter);
+    renderShifts();
+  });
+
+  // ---- WebSocket con reconexión (backoff exponencial) ----
+  const pill = document.getElementById('statusPill');
+  const statusText = document.getElementById('statusText');
+  let ws = null, backoff = 1000, pingTimer = null, everConnected = false;
+
+  function setStatus(live, txt) {
+    pill.className = 'mon-status ' + (live ? 'live' : 'down');
+    statusText.textContent = txt;
+  }
+
+  function wsUrl() {
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    return proto + '://' + location.host + '/ws/monitor/';
+  }
+
+  function connect() {
+    setStatus(false, everConnected ? 'Reconectando…' : 'Conectando…');
+    ws = new WebSocket(wsUrl());
+
+    ws.onopen = function () {
+      everConnected = true;
+      backoff = 1000;
+      setStatus(true, 'En vivo');
+      loadShifts();
+      clearInterval(pingTimer);
+      pingTimer = setInterval(function () {
+        if (ws && ws.readyState === WebSocket.OPEN) ws.send('ping');
+      }, 25000);
+    };
+
+    ws.onmessage = function (e) {
+      if (e.data === 'pong') return;
+      let m;
+      try { m = JSON.parse(e.data); } catch (_) { return; }
+      if (m.type === 'snapshot') {
+        if (m.shifts) { lastShifts = m.shifts; shiftKey = null; renderShifts(); }
+        grid.innerHTML = '';
+        (m.events || []).forEach(function (ev) { addCard(ev, true); });
+        if (m.counts) {
+          counts.served = m.counts.served || 0;
+          counts.duplicados = m.counts.duplicados || 0;
+          counts.sin_turno = m.counts.sin_turno || 0;
+          counts.no_autorizados = m.counts.no_autorizados || 0;
+          counts.visitas = m.counts.visitas || 0;
+          renderCounts();
+        }
+        emptyEl.style.display = grid.children.length ? 'none' : '';
+      } else if (m.type === 'event') {
+        addCard(m.event, true);
+        bumpCount(m.event.status, m.event.is_visitor);
+        loadShifts();  // una marcación nueva puede venir con un turno recién abierto
+      }
+    };
+
+    ws.onclose = function () {
+      clearInterval(pingTimer);
+      setStatus(false, 'Reconectando…');
+      setTimeout(connect, backoff);
+      backoff = Math.min(backoff * 2, 15000);  // reintentos con backoff hasta 15 s
+    };
+
+    ws.onerror = function () { if (ws) ws.close(); };
+  }
+
+  connect();
+})();
+</script>
+{% endblock %}

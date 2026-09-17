@@ -1,0 +1,108 @@
+{% extends 'base.html' %}
+{% block title %}{{ station.name }} · Casino{% endblock %}
+{% block nav_stations %}active{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h1 class="page-title"><i class="bi bi-hdd-network"></i> {{ station.name }}</h1>
+  <a href="{% url 'webapp:station_list' %}" class="btn btn-outline-secondary btn-sm">← Volver</a>
+</div>
+
+{% if new_key %}
+<div class="alert alert-success">
+  <h6 class="alert-heading"><i class="bi bi-key"></i> API key generada</h6>
+  <p class="mb-1 small">Cópiala ahora si la vas a usar manualmente. <strong>No se volverá a mostrar.</strong></p>
+  <code class="user-select-all d-block p-2 bg-white border rounded">{{ new_key.key }}</code>
+  <p class="mb-0 mt-2 small text-muted">Normalmente no la necesitas: el terminal obtiene su key
+    solo, al enrolarse con el ID de dispositivo y la contraseña.</p>
+</div>
+{% endif %}
+
+<div class="row g-3">
+  <div class="col-lg-5">
+    <div class="card shadow-sm mb-3">
+      <div class="card-header bg-white fw-semibold">Datos de la estación</div>
+      <div class="card-body">
+        <form method="post">
+          {% csrf_token %}
+          <div class="mb-3"><label class="form-label">Nombre</label>{{ form.name }}
+            {% for e in form.name.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</div>
+          <div class="mb-3">
+            <label class="form-label">ID de dispositivo</label>{{ form.device_id }}
+            {% for e in form.device_id.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Contraseña de enrolado</label>{{ form.enroll_password }}
+            <div class="form-text">{{ form.enroll_password.help_text }}</div>
+            {% for e in form.enroll_password.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+          </div>
+          <div class="mb-3"><label class="form-label">Ubicación</label>{{ form.location }}</div>
+          <div class="form-check mb-3">{{ form.is_active }}<label class="form-check-label">Activa</label></div>
+          <button type="submit" class="btn btn-primary btn-sm"><i class="bi bi-save"></i> Guardar</button>
+        </form>
+        <hr>
+        <p class="small mb-0 text-muted">
+          Última sincronización:
+          {% if station.last_sync_at %}{{ station.last_sync_at|date:"d-m-Y H:i" }}{% else %}nunca{% endif %}
+        </p>
+      </div>
+    </div>
+
+    <div class="card shadow-sm border-primary-subtle">
+      <div class="card-header bg-white fw-semibold"><i class="bi bi-plug"></i> Cómo enrolar el terminal</div>
+      <div class="card-body small">
+        <p class="mb-2">En la app CasinoAccess: <strong>Configuración → Integración → Respaldo en servidor</strong>, ingresa:</p>
+        <ul class="mb-2">
+          <li>IP del servidor (esta máquina) y puerto del backend</li>
+          <li>ID de dispositivo: <code class="fs-6">{{ station.device_id }}</code></li>
+          <li>La contraseña de enrolado definida arriba</li>
+        </ul>
+        <p class="mb-0 text-muted">Al presionar «Enrolar», el terminal obtiene su API key
+          automáticamente y comienza a respaldar. No es necesario copiar claves a mano.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-7">
+    <div class="card shadow-sm">
+      <div class="card-header bg-white d-flex justify-content-between align-items-center">
+        <span class="fw-semibold">API keys <span class="text-muted fw-normal small">(avanzado)</span></span>
+        <form method="post" action="{% url 'webapp:station_api_key_create' station.pk %}" class="d-flex gap-2">
+          {% csrf_token %}
+          <input type="text" name="name" class="form-control form-control-sm" placeholder="Nombre (opcional)" style="width: 180px;">
+          <button type="submit" class="btn btn-sm btn-success"><i class="bi bi-plus-lg"></i> Generar</button>
+        </form>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm mb-0 align-middle">
+          <thead><tr><th>Prefijo</th><th>Nombre</th><th>Creada</th><th>Estado</th><th></th></tr></thead>
+          <tbody>
+            {% for k in api_keys %}
+            <tr>
+              <td><code>{{ k.prefix }}</code></td>
+              <td>{{ k.name }}</td>
+              <td>{{ k.created|date:"d-m-Y" }}</td>
+              <td>{% if k.revoked %}<span class="badge bg-danger">revocada</span>{% else %}<span class="badge bg-success">activa</span>{% endif %}</td>
+              <td class="text-end">
+                {% if not k.revoked %}
+                <form method="post" action="{% url 'webapp:station_api_key_revoke' station.pk k.id %}" onsubmit="return confirm('¿Revocar esta API key? La app dejará de poder subir datos con ella.');">
+                  {% csrf_token %}
+                  <button class="btn btn-sm btn-outline-danger"><i class="bi bi-slash-circle"></i> Revocar</button>
+                </form>
+                {% endif %}
+              </td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="5" class="text-muted text-center py-3">Sin API keys aún: se creará sola cuando el terminal se enrole.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="card-footer bg-white small text-muted">
+        Cada enrolado del terminal genera una key nueva (llamada «enrolado …») y revoca la del
+        enrolado anterior. Las keys creadas a mano no se tocan.
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

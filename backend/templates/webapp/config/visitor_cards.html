@@ -1,0 +1,68 @@
+{% extends 'base.html' %}
+{% block title %}Tarjetas de visita · {{ station.name }}{% endblock %}
+{% block nav_config %}active{% endblock %}
+
+{% block content %}
+{% with tab='cards' %}{% include 'webapp/config/_station_tabs.html' %}{% endwith %}
+
+<div class="row g-3">
+  <div class="col-lg-4">
+    <div class="card shadow-sm">
+      <div class="card-header bg-white fw-semibold"><i class="bi bi-plus-lg"></i> Agregar tarjeta al set</div>
+      <div class="card-body">
+        <form method="post">
+          {% csrf_token %}
+          <div class="mb-3">
+            <label class="form-label">{{ form.card_no.label }}</label>{{ form.card_no }}
+            {% for e in form.card_no.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+            <div class="form-text">Debe ser el número tal como lo escribe el lector del terminal (en el terminal: Configuración → Visitas → «Leer tarjeta» lo captura solo).</div>
+          </div>
+          <div class="mb-3"><label class="form-label">{{ form.label.label }}</label>{{ form.label }}</div>
+          <div class="form-check mb-3">{{ form.enabled }}<label class="form-check-label">{{ form.enabled.label }}</label></div>
+          <button type="submit" class="btn btn-primary btn-sm"><i class="bi bi-plus-lg"></i> Agregar</button>
+        </form>
+      </div>
+    </div>
+    <div class="card shadow-sm mt-3 border-primary-subtle">
+      <div class="card-body ds-caption">
+        <p class="mb-1"><strong>Cómo funciona:</strong> solo las visitas usan estas tarjetas. Al pasar la tarjeta, el terminal
+        fotografía a la visita, registra su colación como <span class="pill-tag-soft">VISITA</span>
+        y aplica <strong>una colación por tarjeta por turno</strong>: si se repite, aparece como TARJETA REPETIDA.</p>
+        <p class="mb-0">Una tarjeta que no esté en el set (o esté deshabilitada) queda NO AUTORIZADA.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-8">
+    <div class="card shadow-sm">
+      <div class="card-header bg-white fw-semibold">Set de tarjetas <span class="text-muted fw-normal small">({{ cards|length }})</span></div>
+      <div class="table-responsive">
+        <table class="table table-hover mb-0 align-middle">
+          <thead><tr><th>Nº tarjeta</th><th>Etiqueta</th><th>Creada</th><th>Estado</th><th class="text-end">Acciones</th></tr></thead>
+          <tbody>
+            {% for c in cards %}
+            <tr>
+              <td><code>{{ c.card_no }}</code></td>
+              <td>{{ c.label|default:"—" }}</td>
+              <td class="small text-muted">{{ c.created_at|date:"d-m-Y" }}</td>
+              <td>{% if c.enabled %}<span class="badge text-bg-success">Habilitada</span>{% else %}<span class="badge text-bg-secondary">Deshabilitada</span>{% endif %}</td>
+              <td class="text-end text-nowrap">
+                <form method="post" action="{% url 'webapp:visitor_card_toggle' station.pk c.pk %}" class="d-inline">{% csrf_token %}
+                  <button class="btn btn-sm btn-outline-secondary" type="submit">{% if c.enabled %}Deshabilitar{% else %}Habilitar{% endif %}</button>
+                </form>
+                <form method="post" action="{% url 'webapp:visitor_card_delete' station.pk c.pk %}" class="d-inline"
+                      onsubmit="return confirm('¿Eliminar la tarjeta {{ c.card_no }} del set?');">{% csrf_token %}
+                  <button class="btn btn-sm btn-outline-danger" type="submit"><i class="bi bi-trash"></i></button>
+                </form>
+              </td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="5" class="text-muted text-center py-3">Sin tarjetas en el set. Agrega las tarjetas que se entregarán a las visitas.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,100 @@
+{% extends 'base.html' %}
+{% block title %}Personas y colación · {{ station.name }}{% endblock %}
+{% block nav_config %}active{% endblock %}
+
+{% block content %}
+{% with tab='persons' %}{% include 'webapp/config/_station_tabs.html' %}{% endwith %}
+
+<div class="d-flex justify-content-between align-items-center mb-2">
+  <h5 class="mb-0">Personas y colación asignada</h5>
+</div>
+<p class="small text-muted">
+  La colación de cada persona se administra en <strong>HikCentral</strong> (campo personalizado
+  «Colacion»: <code>0</code> sin colación, <code>1</code> solo almuerzo, <code>2</code> todos los turnos).
+  El terminal la lee al sincronizar personas y la respalda aquí; <strong>no se edita en esta página</strong>.
+  Una persona con el campo vacío se atiende como «todos los turnos».
+</p>
+
+<div class="row g-2 mb-3">
+  <div class="col-6 col-md">
+    <a href="?" class="text-decoration-none">
+      <div class="card stat-card shadow-sm {% if not policy %}border-primary{% endif %}"><div class="card-body">
+        <div class="value">{{ counts.total }}</div><div class="label">Funcionarios</div>
+      </div></div>
+    </a>
+  </div>
+  <div class="col-6 col-md">
+    <a href="?colacion=2" class="text-decoration-none">
+      <div class="card stat-card shadow-sm {% if policy == '2' %}border-primary{% endif %}"><div class="card-body">
+        <div class="value is-success">{{ counts.2 }}</div><div class="label">Todos los turnos</div>
+      </div></div>
+    </a>
+  </div>
+  <div class="col-6 col-md">
+    <a href="?colacion=1" class="text-decoration-none">
+      <div class="card stat-card shadow-sm {% if policy == '1' %}border-primary{% endif %}"><div class="card-body">
+        <div class="value is-warning">{{ counts.1 }}</div><div class="label">Solo almuerzo</div>
+      </div></div>
+    </a>
+  </div>
+  <div class="col-6 col-md">
+    <a href="?colacion=0" class="text-decoration-none">
+      <div class="card stat-card shadow-sm {% if policy == '0' %}border-primary{% endif %}"><div class="card-body">
+        <div class="value is-danger">{{ counts.0 }}</div><div class="label">Sin colación</div>
+      </div></div>
+    </a>
+  </div>
+  <div class="col-6 col-md">
+    <a href="?colacion=none" class="text-decoration-none">
+      <div class="card stat-card shadow-sm {% if policy == 'none' %}border-primary{% endif %}"><div class="card-body">
+        <div class="value text-muted">{{ counts.none }}</div><div class="label">Sin definir</div>
+      </div></div>
+    </a>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-body py-2">
+    <form method="get" class="row g-2 align-items-center">
+      <input type="hidden" name="colacion" value="{{ policy }}">
+      <div class="col-md-5">
+        <input type="search" name="q" value="{{ query }}" class="form-control form-control-sm"
+               placeholder="Buscar por nombre, nº o empresa">
+      </div>
+      <div class="col-auto">
+        <button class="btn btn-sm btn-outline-secondary"><i class="bi bi-search"></i> Buscar</button>
+        {% if query or policy %}<a href="?" class="btn btn-sm btn-link">Limpiar</a>{% endif %}
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="table-responsive">
+    <table class="table table-hover table-sm mb-0 align-middle">
+      <thead><tr><th>Persona</th><th>Nº</th><th>Empresa / departamento</th><th>Colación</th><th>Autorizado</th></tr></thead>
+      <tbody>
+        {% for p in persons %}
+        <tr>
+          <td class="fw-semibold">{{ p.name|default:"(sin nombre)" }}</td>
+          <td><code>{{ p.employee_no }}</code></td>
+          <td class="small">{{ p.company|default:"Sin empresa" }}</td>
+          <td>
+            {% if p.meal_policy == 0 %}<span class="badge text-bg-danger">Sin colación</span>
+            {% elif p.meal_policy == 1 %}<span class="badge text-bg-warning">Solo almuerzo</span>
+            {% elif p.meal_policy == 2 %}<span class="badge text-bg-success">Todos los turnos</span>
+            {% else %}<span class="badge text-bg-light border text-muted">Sin definir</span>{% endif %}
+          </td>
+          <td>{% if p.authorized %}<i class="bi bi-check-circle-fill text-success"></i>{% else %}<i class="bi bi-x-circle text-danger"></i> No{% endif %}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="5" class="text-muted text-center py-3">
+          {% if query or policy %}Ninguna persona coincide con el filtro.{% else %}
+          Sin personas respaldadas aún: el terminal las sube en su próxima sincronización completa.{% endif %}
+        </td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

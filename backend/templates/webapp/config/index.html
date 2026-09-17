@@ -1,0 +1,34 @@
+{% extends 'base.html' %}
+{% block title %}Turnos y empresas · Casino{% endblock %}
+{% block nav_config %}active{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h1 class="page-title"><i class="bi bi-calendar2-week"></i> Turnos y empresas</h1>
+</div>
+<p class="ds-caption">Cada estación tiene sus propios turnos de colación, empresas autorizadas y set de tarjetas de visita. Elige la estación a configurar.</p>
+
+<div class="card shadow-sm">
+  <div class="table-responsive">
+    <table class="table table-hover mb-0 align-middle">
+      <thead><tr><th>Estación</th><th>Turnos</th><th>Tarjetas de visita</th><th>Config. actualizada</th><th class="text-end">Acciones</th></tr></thead>
+      <tbody>
+        {% for s in stations %}
+        <tr>
+          <td>{{ s.name }}</td>
+          <td>{{ s.schedules.count }}</td>
+          <td>{{ s.visitor_cards.count }}</td>
+          <td>{% if s.config_updated_at %}{{ s.config_updated_at|date:"d-m-Y H:i" }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
+          <td class="text-end">
+            <a href="{% url 'webapp:schedule_list' s.pk %}" class="btn btn-sm btn-outline-primary"><i class="bi bi-calendar2-week"></i> Turnos y empresas</a>
+            <a href="{% url 'webapp:visitor_card_list' s.pk %}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-credit-card-2-front"></i> Tarjetas de visita</a>
+          </td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="5" class="text-muted text-center py-3">Sin estaciones. Crea una en «Estaciones» y enrola el terminal.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

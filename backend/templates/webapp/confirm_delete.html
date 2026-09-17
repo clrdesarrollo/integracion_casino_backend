@@ -1,0 +1,16 @@
+{% extends 'base.html' %}
+{% block title %}Confirmar · Casino{% endblock %}
+
+{% block content %}
+<div class="card shadow-sm" style="max-width: 520px;">
+  <div class="card-body">
+    <h5 class="card-title text-danger"><i class="bi bi-exclamation-triangle"></i> Confirmar eliminación</h5>
+    <p>¿Eliminar el {{ tipo }} <strong>{{ obj }}</strong>? Esta acción no se puede deshacer.</p>
+    <form method="post">
+      {% csrf_token %}
+      <button type="submit" class="btn btn-danger"><i class="bi bi-trash"></i> Eliminar</button>
+      {% if volver_pk %}<a href="{% url volver volver_pk %}" class="btn btn-outline-secondary">Cancelar</a>{% else %}<a href="{% url volver %}" class="btn btn-outline-secondary">Cancelar</a>{% endif %}
+    </form>
+  </div>
+</div>
+{% endblock %}

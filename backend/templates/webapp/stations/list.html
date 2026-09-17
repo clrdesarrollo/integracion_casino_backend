@@ -1,0 +1,36 @@
+{% extends 'base.html' %}
+{% block title %}Estaciones · Casino{% endblock %}
+{% block nav_stations %}active{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h1 class="page-title">Estaciones</h1>
+  <a href="{% url 'webapp:station_create' %}" class="btn btn-primary btn-sm">
+    <i class="bi bi-plus-lg"></i> Nueva estación
+  </a>
+</div>
+
+<div class="card shadow-sm">
+  <div class="table-responsive">
+    <table class="table table-hover mb-0 align-middle">
+      <thead><tr><th>ID dispositivo</th><th>Nombre</th><th>Ubicación</th><th>Última sync</th><th>Activa</th><th class="text-end">Acciones</th></tr></thead>
+      <tbody>
+        {% for s in stations %}
+        <tr>
+          <td><code>{{ s.device_id }}</code></td>
+          <td>{{ s.name }}</td>
+          <td>{{ s.location|default:"—" }}</td>
+          <td>{% if s.last_sync_at %}{{ s.last_sync_at|date:"d-m-Y H:i" }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
+          <td>{% if s.is_active %}<i class="bi bi-check-circle-fill text-success"></i>{% else %}<i class="bi bi-x-circle text-muted"></i>{% endif %}</td>
+          <td class="text-end">
+            <a href="{% url 'webapp:station_detail' s.pk %}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-gear"></i> Configurar</a>
+          </td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="6" class="text-muted text-center py-3">Sin estaciones. Crea la primera y enrola el terminal con su ID y contraseña.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,28 @@
+{# Encabezado común: selector de estación + pestañas Turnos / Tarjetas #}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+  <div class="d-flex align-items-center gap-3">
+    <h1 class="page-title"><i class="bi bi-calendar2-week"></i> {{ station.name }}</h1>
+    {% if stations|length > 1 %}
+    <div class="dropdown">
+      <button class="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown">Cambiar estación</button>
+      <ul class="dropdown-menu">
+        {% for s in stations %}
+        <li><a class="dropdown-item {% if s.pk == station.pk %}active{% endif %}"
+               href="{% if tab == 'cards' %}{% url 'webapp:visitor_card_list' s.pk %}{% elif tab == 'persons' %}{% url 'webapp:person_list' s.pk %}{% else %}{% url 'webapp:schedule_list' s.pk %}{% endif %}">{{ s.name }}</a></li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+  </div>
+  <ul class="nav nav-pills">
+    <li class="nav-item"><a class="nav-link {% if tab == 'schedules' %}active{% endif %}" href="{% url 'webapp:schedule_list' station.pk %}"><i class="bi bi-calendar2-week"></i> Turnos y empresas</a></li>
+    <li class="nav-item"><a class="nav-link {% if tab == 'cards' %}active{% endif %}" href="{% url 'webapp:visitor_card_list' station.pk %}"><i class="bi bi-credit-card-2-front"></i> Tarjetas de visita</a></li>
+    <li class="nav-item"><a class="nav-link {% if tab == 'persons' %}active{% endif %}" href="{% url 'webapp:person_list' station.pk %}"><i class="bi bi-person-lines-fill"></i> Personas y colación</a></li>
+  </ul>
+</div>
+<p class="ds-caption mb-3">
+  Esta configuración también se puede editar en el terminal (pestaña Turnos y Configuración → Visitas).
+  En cada sincronización gana la edición más reciente
+  {% if station.config_updated_at %}(última: {{ station.config_updated_at|date:"d-m-Y H:i:s" }}){% endif %};
+  el terminal la aplica en su próxima sincronización periódica (por defecto cada 2 minutos).
+</p>

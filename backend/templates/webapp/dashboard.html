@@ -1,0 +1,218 @@
+{% extends 'base.html' %}
+{% block title %}Panel · Casino Backoffice{% endblock %}
+{% block nav_dashboard %}active{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h1 class="page-title">Panel de control</h1>
+  <a href="{% url 'reports:report' %}" class="btn btn-outline-primary btn-sm">
+    <i class="bi bi-file-earmark-bar-graph"></i> Ver reportería
+  </a>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-md-3">
+    <div class="card stat-card shadow-sm"><div class="card-body">
+      <div class="value">{{ total_mes }}</div>
+      <div class="label">Colaciones {{ mes_actual|date:"F Y" }}</div>
+    </div></div>
+  </div>
+  <div class="col-md-3">
+    <div class="card stat-card shadow-sm"><div class="card-body">
+      <div class="value is-success">{{ total_personas }}</div>
+      <div class="label">Personas respaldadas</div>
+    </div></div>
+  </div>
+  <div class="col-md-3">
+    <div class="card stat-card shadow-sm"><div class="card-body">
+      <div class="value">{{ total_eventos }}</div>
+      <div class="label">Marcaciones totales</div>
+    </div></div>
+  </div>
+  <div class="col-md-3">
+    <div class="card stat-card shadow-sm"><div class="card-body">
+      <div class="value">{{ total_estaciones }}</div>
+      <div class="label">Estaciones</div>
+    </div></div>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-5">
+    <div class="card shadow-sm">
+      <div class="card-header">Estaciones</div>
+      <div class="table-responsive">
+        <table class="table table-sm mb-0">
+          <thead><tr><th>Estación</th><th>Última sync</th><th class="text-end">Estado</th></tr></thead>
+          <tbody>
+            {% for e in estaciones %}
+            <tr>
+              <td>{{ e.name }}</td>
+              <td>{% if e.last_sync_at %}{{ e.last_sync_at|date:"d-m H:i" }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
+              <td class="text-end">
+                {% if not e.is_active %}<span class="badge bg-secondary">inactiva</span>
+                {% elif e.last_sync_at and e.last_sync_at < umbral_offline %}<span class="badge bg-warning text-dark">sin datos 24h</span>
+                {% elif e.last_sync_at %}<span class="badge bg-success">al día</span>
+                {% else %}<span class="badge bg-light text-dark">sin sync</span>{% endif %}
+              </td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="3" class="text-muted text-center py-3">Sin estaciones registradas.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card shadow-sm mt-3">
+      <div class="card-header">Colaciones del mes por estación</div>
+      <div class="table-responsive">
+        <table class="table table-sm mb-0">
+          <tbody>
+            {% for row in por_estacion %}
+            <tr><td>{{ row.station__name|default:"(sin estación)" }}</td><td class="text-end fw-semibold">{{ row.total }}</td></tr>
+            {% empty %}
+            <tr><td class="text-muted text-center py-3">Sin colaciones este mes.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-7">
+    <div class="card shadow-sm">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span>Últimas marcaciones</span>
+        <span id="dashLive" class="badge rounded-pill bg-secondary-subtle text-secondary fw-normal">
+          <span id="dashLiveDot" class="d-inline-block rounded-circle align-middle"
+                style="width:7px;height:7px;background:var(--ds-ink-mute);"></span>
+          <span id="dashLiveText" class="align-middle ms-1">Conectando…</span>
+        </span>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0">
+          <thead><tr><th>Fecha</th><th>Persona</th><th>Empresa</th><th>Estación</th><th>Estado</th></tr></thead>
+          <tbody id="dashEvents">
+            {% for ev in ultimos_eventos %}
+            <tr>
+              <td class="text-nowrap">{{ ev.event_time|date:"d-m H:i" }}</td>
+              <td>{{ ev.person_name|default:ev.employee_no }}</td>
+              <td>{{ ev.company|default:"—" }}</td>
+              <td>{{ ev.station.name }}</td>
+              <td>
+                {% if ev.status == 'Ok' %}<span class="badge bg-success">Ok</span>
+                {% elif ev.status == 'Duplicado' %}<span class="badge bg-warning text-dark">Duplicado</span>
+                {% elif ev.status == 'SinTurno' %}<span class="badge bg-secondary">Fuera de turno</span>
+                {% else %}<span class="badge bg-danger">No autorizado</span>{% endif %}
+              </td>
+            </tr>
+            {% empty %}
+            <tr class="js-empty"><td colspan="5" class="text-muted text-center py-3">Aún no se reciben marcaciones.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+  @keyframes dashIn { from { background:var(--ds-info-bg); } to { background:transparent; } }
+  #dashEvents tr.is-new { animation: dashIn 1.8s ease-out; }
+</style>
+
+<script>
+(function () {
+  // Misma fuente que el Monitor en vivo: el grupo WebSocket difunde cada marcación ingerida.
+  const MAX = 15;   // mismo tope que la consulta del servidor
+  // Los colores salen de los tokens del DESIGN.md, no hardcodeados.
+  const CSSVAR = function (n) { return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); };
+  const body = document.getElementById('dashEvents');
+  const dot = document.getElementById('dashLiveDot');
+  const label = document.getElementById('dashLiveText');
+  if (!body) return;
+
+  const BADGE = {
+    'Ok':           ['bg-success', 'Ok'],
+    'Duplicado':    ['bg-warning text-dark', 'Duplicado'],
+    'SinTurno':     ['bg-secondary', 'Fuera de turno'],
+    'NoAutorizado': ['bg-danger', 'No autorizado'],
+  };
+
+  function esc(s) { const d = document.createElement('div'); d.textContent = s == null ? '' : s; return d.innerHTML; }
+
+  function setLive(on, txt) {
+    dot.style.background = on ? CSSVAR('--ds-success') : CSSVAR('--ds-ink-mute');
+    label.textContent = txt;
+  }
+
+  function rowFor(ev) {
+    const b = BADGE[ev.status] || ['bg-secondary', ev.status];
+    const tr = document.createElement('tr');
+    tr.className = 'is-new';
+    tr.innerHTML =
+      '<td class="text-nowrap">' + esc(ev.short_when || (ev.date_text + ' ' + ev.time_text)) + '</td>' +
+      '<td>' + esc(ev.person_name) + '</td>' +
+      '<td>' + esc(ev.company || '—') + '</td>' +
+      '<td>' + esc(ev.station || '') + '</td>' +
+      '<td><span class="badge ' + b[0] + '">' + esc(b[1]) + '</span></td>';
+    return tr;
+  }
+
+  function prepend(ev) {
+    const empty = body.querySelector('tr.js-empty');
+    if (empty) empty.remove();
+    body.insertBefore(rowFor(ev), body.firstChild);
+    while (body.children.length > MAX) body.removeChild(body.lastChild);
+  }
+
+  // ---- WebSocket con reconexión ----
+  let ws = null, backoff = 1000, pingTimer = null, everConnected = false;
+
+  function connect() {
+    setLive(false, everConnected ? 'Reconectando…' : 'Conectando…');
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    ws = new WebSocket(proto + '://' + location.host + '/ws/monitor/');
+
+    ws.onopen = function () {
+      everConnected = true;
+      backoff = 1000;
+      setLive(true, 'En vivo');
+      clearInterval(pingTimer);
+      pingTimer = setInterval(function () {
+        if (ws && ws.readyState === WebSocket.OPEN) ws.send('ping');
+      }, 25000);
+    };
+
+    ws.onmessage = function (e) {
+      if (e.data === 'pong') return;
+      let m;
+      try { m = JSON.parse(e.data); } catch (_) { return; }
+      if (m.type === 'snapshot') {
+        // el snapshot viene del más antiguo al más nuevo: al anteponer queda el último arriba
+        const evs = (m.events || []).slice(-MAX);
+        if (evs.length) {
+          body.innerHTML = '';
+          evs.forEach(prepend);
+          Array.prototype.forEach.call(body.children, function (tr) { tr.classList.remove('is-new'); });
+        }
+      } else if (m.type === 'event') {
+        prepend(m.event);
+      }
+    };
+
+    ws.onclose = function () {
+      clearInterval(pingTimer);
+      setLive(false, 'Reconectando…');
+      setTimeout(connect, backoff);
+      backoff = Math.min(backoff * 2, 15000);
+    };
+
+    ws.onerror = function () { if (ws) ws.close(); };
+  }
+
+  connect();
+})();
+</script>
+{% endblock %}

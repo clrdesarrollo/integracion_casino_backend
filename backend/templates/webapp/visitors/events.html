@@ -1,0 +1,193 @@
+{% extends 'base.html' %}
+{% block title %}Colaciones de visitas · Casino Backoffice{% endblock %}
+{% block nav_visitors %}active{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-1">
+  <h1 class="page-title"><i class="bi bi-person-badge"></i> Colaciones de visitas</h1>
+</div>
+<p class="ds-caption mb-3">
+  Marcaciones hechas con tarjeta del set de visitas. Se facturan aparte, por eso el terminal
+  fotografía a cada visita al momento de retirar: la foto es la constancia de quién comió.
+</p>
+
+<div class="row g-3 mb-3">
+  <div class="col-md-3">
+    <div class="card stat-card shadow-sm"><div class="card-body">
+      <div class="value is-success">{{ total_cobrables }}</div>
+      <div class="label">Colaciones a cobrar</div>
+    </div></div>
+  </div>
+  <div class="col-md-3">
+    <div class="card stat-card shadow-sm"><div class="card-body">
+      <div class="value">{{ tarjetas_usadas }}</div>
+      <div class="label">Tarjetas distintas</div>
+    </div></div>
+  </div>
+  <div class="col-md-3">
+    <div class="card stat-card shadow-sm"><div class="card-body">
+      <div class="value">{{ total_repetidas }}</div>
+      <div class="label">Repetidas (no se cobran)</div>
+    </div></div>
+  </div>
+  <div class="col-md-3">
+    <div class="card stat-card shadow-sm"><div class="card-body">
+      <div class="value">{{ total_rechazadas }}</div>
+      <div class="label">No autorizadas</div>
+    </div></div>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <form method="get" class="row g-2 align-items-end">
+      <div class="col-sm-6 col-lg-2">
+        <label class="form-label ds-micro-cap">Desde</label>
+        <input type="date" name="desde" value="{{ desde|date:'Y-m-d' }}" class="form-control form-control-sm">
+      </div>
+      <div class="col-sm-6 col-lg-2">
+        <label class="form-label ds-micro-cap">Hasta</label>
+        <input type="date" name="hasta" value="{{ hasta|date:'Y-m-d' }}" class="form-control form-control-sm">
+      </div>
+      <div class="col-sm-6 col-lg-2">
+        <label class="form-label ds-micro-cap">Estación</label>
+        <select name="estacion" class="form-select form-select-sm">
+          <option value="">Todas</option>
+          {% for s in stations %}
+          <option value="{{ s.pk }}" {% if estacion == s.pk|stringformat:"s" %}selected{% endif %}>{{ s.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-sm-6 col-lg-2">
+        <label class="form-label ds-micro-cap">Estado</label>
+        <select name="estado" class="form-select form-select-sm">
+          <option value="">Todos</option>
+          {% for value, label in statuses %}
+          <option value="{{ value }}" {% if estado == value %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-sm-8 col-lg-3">
+        <label class="form-label ds-micro-cap">Buscar</label>
+        <input type="search" name="q" value="{{ q }}" placeholder="Etiqueta o nº de tarjeta"
+               class="form-control form-control-sm">
+      </div>
+      <div class="col-sm-4 col-lg-1 d-grid">
+        <button class="btn btn-primary btn-sm" type="submit"><i class="bi bi-funnel"></i> Filtrar</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% if truncado %}
+<div class="alert alert-warning py-2 ds-caption">
+  Se muestran las 500 marcaciones más recientes del rango. Acota las fechas para verlas todas.
+</div>
+{% endif %}
+
+<div class="row g-3">
+  <div class="col-lg-9">
+    <div class="card shadow-sm">
+      <div class="card-header bg-white fw-semibold">
+        Marcaciones <span class="text-muted fw-normal small">({{ events|length }})</span>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+          <thead>
+            <tr>
+              <th style="width:78px">Foto</th>
+              <th>Tarjeta</th>
+              <th>Turno</th>
+              <th>Estación</th>
+              <th>Fecha y hora</th>
+              <th>Estado</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for ev in events %}
+            <tr>
+              <td>
+                {% if ev.has_photo %}
+                <a href="{% url 'webapp:visitor_event_photo' ev.pk %}" target="_blank"
+                   title="Ver la foto en tamaño completo">
+                  <img src="{% url 'webapp:visitor_event_photo' ev.pk %}" alt="Foto de la visita"
+                       width="56" height="56" loading="lazy"
+                       style="object-fit:cover;border-radius:var(--ds-radius-md);border:1px solid var(--ds-hairline)">
+                </a>
+                {% else %}
+                <span class="text-muted" title="El terminal no logró capturar la foto"><i class="bi bi-camera-video-off"></i></span>
+                {% endif %}
+              </td>
+              <td>
+                <div>{{ ev.card_label|default:ev.person_name }}</div>
+                <code class="ds-micro text-muted">{{ ev.card_no|default:"—" }}</code>
+              </td>
+              <td>
+                {% if ev.shift %}
+                  {{ ev.shift.name }}
+                  {% if ev.shift.is_reopening %}
+                  <span class="badge text-bg-info" title="Marcación registrada en una reapertura del turno">reapertura</span>
+                  {% endif %}
+                {% else %}<span class="text-muted">—</span>{% endif %}
+              </td>
+              <td class="ds-caption">{{ ev.station.name }}</td>
+              <td class="ds-caption">{{ ev.event_time|date:"d-m-Y H:i:s" }}</td>
+              <td>
+                {% if ev.status == 'Ok' %}
+                  <span class="badge text-bg-success">Se cobra</span>
+                {% elif ev.status == 'Duplicado' %}
+                  <span class="badge text-bg-warning">Repetida</span>
+                {% elif ev.status == 'NoAutorizado' %}
+                  <span class="badge text-bg-danger">No autorizada</span>
+                {% else %}
+                  <span class="badge text-bg-secondary">Fuera de turno</span>
+                {% endif %}
+                {% if ev.detail %}<div class="ds-micro text-muted">{{ ev.detail }}</div>{% endif %}
+              </td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="6" class="text-muted text-center py-4">
+              No hay marcaciones de visitas en el rango elegido.
+            </td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-3">
+    <div class="card shadow-sm">
+      <div class="card-header bg-white fw-semibold">Colaciones por tarjeta</div>
+      <div class="table-responsive">
+        <table class="table table-sm mb-0">
+          <thead><tr><th>Tarjeta</th><th class="text-end">Cobrables</th></tr></thead>
+          <tbody>
+            {% for tarjeta, total in por_tarjeta %}
+            <tr>
+              <td>
+                <div class="ds-caption">{{ tarjeta.1|default:"—" }}</div>
+                <code class="ds-micro text-muted">{{ tarjeta.0 }}</code>
+              </td>
+              <td class="text-end fw-semibold">{{ total }}</td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="2" class="text-muted text-center py-3">Sin colaciones cobrables.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card shadow-sm mt-3 border-primary-subtle">
+      <div class="card-body ds-caption">
+        <p class="mb-1"><strong>Cómo leer esta pantalla:</strong> solo las marcaciones
+        <span class="badge text-bg-success">Se cobra</span> son colaciones efectivamente
+        entregadas y facturables.</p>
+        <p class="mb-0">Una <strong>repetida</strong> es la misma tarjeta pasando dos veces en el
+        mismo turno (incluidas sus reaperturas): no corresponde cobrarla.</p>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

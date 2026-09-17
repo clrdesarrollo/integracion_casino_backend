@@ -1,0 +1,712 @@
+/* ==========================================================================
+   Casino · Backoffice — Sistema de diseño
+   Derivado de DESIGN.md (Stripe-inspired) en la raíz del proyecto.
+
+   Se carga DESPUÉS de Bootstrap 5.3: remapea las variables --bs-* a los
+   tokens del DESIGN.md y agrega los componentes propios del sistema.
+   Al editar, mantener los nombres de token del DESIGN.md como fuente de
+   verdad y cambiar aquí solamente el mapeo.
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   1. Tokens
+   -------------------------------------------------------------------------- */
+:root {
+  /* --- Perillas de comodidad ---------------------------------------------
+     El DESIGN.md exige peso 300 en todo el cuerpo y etiquetas de 10px. Para
+     un backoffice de uso diario ambos quedan justos de legibilidad. Subir
+     estos dos valores (400 y 11-12px) suaviza el sistema completo sin tocar
+     nada más. Los valores actuales son los del DESIGN.md tal cual.          */
+  --ds-body-weight: 300;
+  --ds-label-size: 10px;
+
+  /* --- colors: marca y acento ------------------------------------------- */
+  --ds-primary:              #533afd;
+  --ds-primary-deep:         #4434d4;
+  --ds-primary-press:        #2e2b8c;
+  --ds-primary-soft:         #665efd;
+  --ds-primary-subdued:      #b9b9f9;
+  --ds-brand-dark-900:       #1c1e54;
+  --ds-ruby:                 #ea2261;
+  --ds-magenta:              #f96bee;
+  --ds-lemon:                #9b6829;
+
+  /* --- colors: superficie ----------------------------------------------- */
+  --ds-canvas:               #ffffff;
+  --ds-canvas-soft:          #f6f9fc;
+  --ds-canvas-cream:         #f5e9d4;
+  --ds-hairline:             #e3e8ee;
+  --ds-hairline-input:       #a8c3de;
+
+  /* --- colors: texto ----------------------------------------------------- */
+  --ds-ink:                  #0d253d;
+  --ds-ink-secondary:        #273951;
+  --ds-ink-mute:             #64748d;
+  --ds-ink-mute-2:           #61718a;
+  --ds-on-primary:           #ffffff;
+
+  /* --- colors: semánticos (EXTENSIÓN) ------------------------------------
+     El DESIGN.md declara explícitamente que la marca no documenta paleta
+     semántica ("error / success states live in dashboard-product UI").
+     El backoffice sí necesita estados (Ok / Duplicado / Fuera de turno /
+     No autorizado), así que se derivan de los stops documentados del mesh
+     salvo el verde, que no existe en el DESIGN.md y se agrega afinado al
+     navy de la marca. Es la única desviación de "no agregar acentos".
+     Cada estado trae un par -bg / -text: el color pleno no alcanza 4.5:1
+     sobre su propio fondo suave (ruby sobre #fde5ed da 3.59), así que el
+     texto de badges y alertas usa la variante -text. Verificado con WCAG
+     2.1 AA para texto pequeño.                                            */
+  --ds-success:              #1a7f64;
+  --ds-success-bg:           #e2f2ec;
+  --ds-success-border:       #b4ded1;
+  --ds-success-text:         #12604b;   /* 6.48:1 sobre success-bg */
+  --ds-warning:              #9b6829;   /* = lemon */
+  --ds-warning-bg:           #f7eddd;
+  --ds-warning-border:       #e5d0ad;
+  --ds-warning-text:         #744d1e;   /* 6.42:1 sobre warning-bg */
+  --ds-danger:               #ea2261;   /* = ruby  */
+  --ds-danger-bg:            #fde5ed;
+  --ds-danger-border:        #f7b9cd;
+  --ds-danger-text:          #b4174a;   /* 5.57:1 sobre danger-bg */
+  --ds-info:                 #665efd;   /* = primary-soft */
+  --ds-info-bg:              #ecebfe;
+  --ds-info-border:          #b9b9f9;
+  --ds-info-text:            #4434d4;   /* = primary-deep, 6.65:1 */
+
+  /* --- typography -------------------------------------------------------- */
+  /* Sohne es propietaria. El DESIGN.md indica Inter 300 como sustituto
+     canónico; se carga desde Google Fonts en base.html.                    */
+  --ds-font: "Inter", "Sohne", "SF Pro Display", system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  /* --- rounded ----------------------------------------------------------- */
+  --ds-radius-xs:   4px;
+  --ds-radius-sm:   6px;
+  --ds-radius-md:   8px;
+  --ds-radius-lg:  12px;
+  --ds-radius-xl:  16px;
+  --ds-radius-pill: 9999px;
+
+  /* --- spacing ----------------------------------------------------------- */
+  --ds-space-xxs:  2px;
+  --ds-space-xs:   4px;
+  --ds-space-sm:   8px;
+  --ds-space-md:  12px;
+  --ds-space-lg:  16px;
+  --ds-space-xl:  24px;
+  --ds-space-xxl: 32px;
+  --ds-space-huge: 64px;
+
+  /* --- elevation --------------------------------------------------------- */
+  --ds-elev-1: rgba(0, 55, 112, .08) 0 1px 3px;
+  --ds-elev-2: rgba(0, 55, 112, .08) 0 8px 24px, rgba(0, 55, 112, .04) 0 2px 6px;
+
+  /* --- track oscuro (dashboard / monitor) -------------------------------- */
+  --ds-dark-canvas:   #0d253d;   /* = ink            */
+  --ds-dark-surface:  #1c1e54;   /* = brand-dark-900 */
+  --ds-dark-raised:   #273951;   /* = ink-secondary  */
+  --ds-dark-hairline: rgba(168, 195, 222, .18);
+  --ds-dark-text:     #ffffff;
+  --ds-dark-mute:     #a8c3de;   /* = hairline-input, legible sobre navy */
+
+  /* Acentos sobre navy. Los tokens semánticos son de superficie clara y no
+     alcanzan contraste sobre el track oscuro, así que se levantan en
+     luminosidad conservando el matiz. */
+  --ds-dark-success: #5fd3ac;
+  --ds-dark-success-bg: rgba(26, 127, 100, .22);
+  --ds-dark-warning: #e0b27a;
+  --ds-dark-warning-bg: rgba(155, 104, 41, .28);
+  --ds-dark-danger:  #ff7aa2;
+  --ds-dark-danger-bg: rgba(234, 34, 97, .20);
+  --ds-dark-info:    #a5a0ff;
+  --ds-dark-info-bg: rgba(83, 58, 253, .26);
+}
+
+/* --------------------------------------------------------------------------
+   2. Remapeo de Bootstrap 5.3 a los tokens
+   -------------------------------------------------------------------------- */
+:root {
+  --bs-font-sans-serif: var(--ds-font);
+  --bs-body-font-family: var(--ds-font);
+  --bs-body-font-size: 15px;               /* body-md */
+  --bs-body-font-weight: var(--ds-body-weight);
+  --bs-body-line-height: 1.4;
+  --bs-body-color: var(--ds-ink);
+  --bs-body-color-rgb: 13, 37, 61;
+  --bs-body-bg: var(--ds-canvas-soft);
+  --bs-body-bg-rgb: 246, 249, 252;
+
+  --bs-emphasis-color: var(--ds-ink);
+  /* ink-mute-2 en vez de ink-mute: .text-muted aparece sobre canvas-soft,
+     donde ink-mute queda en 4.49:1, justo bajo AA. */
+  --bs-secondary-color: var(--ds-ink-mute-2);
+  --bs-secondary-bg: var(--ds-canvas-soft);
+  --bs-tertiary-bg: var(--ds-canvas-soft);
+
+  --bs-border-color: var(--ds-hairline);
+  --bs-border-color-translucent: var(--ds-hairline);
+  --bs-border-radius-sm: var(--ds-radius-xs);
+  --bs-border-radius: var(--ds-radius-md);
+  --bs-border-radius-lg: var(--ds-radius-lg);
+  --bs-border-radius-xl: var(--ds-radius-xl);
+  --bs-border-radius-2xl: var(--ds-radius-xl);
+  --bs-border-radius-pill: var(--ds-radius-pill);
+
+  --bs-primary: var(--ds-primary);
+  --bs-primary-rgb: 83, 58, 253;
+  --bs-primary-text-emphasis: var(--ds-primary-deep);
+  --bs-primary-bg-subtle: var(--ds-info-bg);
+  --bs-primary-border-subtle: var(--ds-primary-subdued);
+
+  --bs-link-color: var(--ds-primary);
+  --bs-link-color-rgb: 83, 58, 253;
+  --bs-link-hover-color: var(--ds-primary-deep);
+  --bs-link-decoration: none;               /* link-on-light: sin subrayado */
+
+  --bs-focus-ring-color: rgba(83, 58, 253, .22);
+  --bs-focus-ring-width: 3px;
+
+  /* Estados. Alimentan .bg-*, .text-*, .alert-* y .badge de Bootstrap. */
+  --bs-success: var(--ds-success);
+  --bs-success-rgb: 26, 127, 100;
+  --bs-success-bg-subtle: var(--ds-success-bg);
+  --bs-success-border-subtle: var(--ds-success-border);
+  --bs-success-text-emphasis: #12604b;
+
+  --bs-warning: var(--ds-warning);
+  --bs-warning-rgb: 155, 104, 41;
+  --bs-warning-bg-subtle: var(--ds-warning-bg);
+  --bs-warning-border-subtle: var(--ds-warning-border);
+  --bs-warning-text-emphasis: #744d1e;
+
+  --bs-danger: var(--ds-danger);
+  --bs-danger-rgb: 234, 34, 97;
+  --bs-danger-bg-subtle: var(--ds-danger-bg);
+  --bs-danger-border-subtle: var(--ds-danger-border);
+  --bs-danger-text-emphasis: #b4174a;
+
+  --bs-info: var(--ds-info);
+  --bs-info-rgb: 102, 94, 253;
+  --bs-info-bg-subtle: var(--ds-info-bg);
+  --bs-info-border-subtle: var(--ds-info-border);
+  --bs-info-text-emphasis: var(--ds-primary-deep);
+
+  --bs-secondary: var(--ds-ink-mute);
+  --bs-secondary-rgb: 100, 116, 141;
+  --bs-secondary-bg-subtle: var(--ds-canvas-soft);
+  --bs-secondary-border-subtle: var(--ds-hairline);
+  --bs-secondary-text-emphasis: var(--ds-ink-secondary);
+
+  --bs-light: var(--ds-canvas-soft);
+  --bs-light-rgb: 246, 249, 252;
+  --bs-dark: var(--ds-brand-dark-900);
+  --bs-dark-rgb: 28, 30, 84;
+}
+
+/* --------------------------------------------------------------------------
+   3. Base tipográfica
+   -------------------------------------------------------------------------- */
+body {
+  font-family: var(--ds-font);
+  font-weight: var(--ds-body-weight);
+  /* ss01 global, exigido por el DESIGN.md */
+  font-feature-settings: "ss01";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Escala display: siempre peso 300 con tracking negativo. Es la firma
+   tipográfica de la marca; subir el peso la anula. */
+h1, .ds-display-xl { font-size: 48px; font-weight: 300; line-height: 1.15; letter-spacing: -.96px; }
+h2, .ds-display-lg { font-size: 32px; font-weight: 300; line-height: 1.1;  letter-spacing: -.64px; }
+h3, .ds-display-md { font-size: 26px; font-weight: 300; line-height: 1.12; letter-spacing: -.26px; }
+h4, .ds-heading-lg { font-size: 22px; font-weight: 300; line-height: 1.1;  letter-spacing: -.22px; }
+h5, .ds-heading-md { font-size: 20px; font-weight: 300; line-height: 1.4;  letter-spacing: -.2px;  }
+h6, .ds-heading-sm { font-size: 18px; font-weight: 300; line-height: 1.4;  letter-spacing: 0;      }
+
+h1, h2, h3, h4, h5, h6 { color: var(--ds-ink); }
+
+.ds-hero { font-size: 56px; font-weight: 300; line-height: 1.03; letter-spacing: -1.4px; }
+
+.ds-caption   { font-size: 13px; font-weight: 400; line-height: 1.4; letter-spacing: -.39px; font-feature-settings: "tnum"; color: var(--ds-ink-mute-2); }
+.ds-micro     { font-size: 11px; font-weight: 300; line-height: 1.4; }
+.ds-micro-cap { font-size: var(--ds-label-size); font-weight: 400; line-height: 1.15; letter-spacing: .1px; text-transform: uppercase; }
+
+/* Cifras tabulares: obligatorio en toda celda de dinero, conteo o numérico.
+   Es la señal silenciosa de "dato financiero" del DESIGN.md. */
+.ds-tabular,
+.table tbody td,
+.stat-card .value {
+  font-feature-settings: "tnum";
+  letter-spacing: -.42px;
+}
+
+/* Peso 300 no debe aplicarse al énfasis: sube un escalón, no dos. */
+.fw-semibold, .fw-bold, strong, b { font-weight: 500 !important; }
+
+/* --------------------------------------------------------------------------
+   4. Botones — pill 9999px, padding 8px 16px, tipo 400
+   -------------------------------------------------------------------------- */
+.btn {
+  --bs-btn-padding-y: var(--ds-space-sm);
+  --bs-btn-padding-x: var(--ds-space-lg);
+  --bs-btn-font-size: 16px;
+  --bs-btn-font-weight: 400;
+  --bs-btn-line-height: 1;
+  --bs-btn-border-radius: var(--ds-radius-pill);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 40px;                 /* touch target del DESIGN.md */
+  transition: background-color .15s ease, border-color .15s ease, color .15s ease;
+}
+
+/* El DESIGN.md prohíbe bajar de 8px 16px: btn-sm solo baja el tipo. */
+.btn-sm {
+  --bs-btn-padding-y: var(--ds-space-sm);
+  --bs-btn-padding-x: var(--ds-space-lg);
+  --bs-btn-font-size: 14px;
+  min-height: 36px;
+}
+
+/* button-primary-pill — la CTA dominante. Una sola por banda. */
+.btn-primary {
+  --bs-btn-bg: var(--ds-primary);
+  --bs-btn-border-color: var(--ds-primary);
+  --bs-btn-color: var(--ds-on-primary);
+  --bs-btn-hover-bg: var(--ds-primary-deep);
+  --bs-btn-hover-border-color: var(--ds-primary-deep);
+  --bs-btn-hover-color: var(--ds-on-primary);
+  --bs-btn-active-bg: var(--ds-primary-press);
+  --bs-btn-active-border-color: var(--ds-primary-press);
+  --bs-btn-disabled-bg: var(--ds-primary-subdued);
+  --bs-btn-disabled-border-color: var(--ds-primary-subdued);
+}
+
+/* button-secondary — outline, misma geometría pill. */
+.btn-outline-primary {
+  --bs-btn-color: var(--ds-primary);
+  --bs-btn-border-color: var(--ds-primary);
+  --bs-btn-bg: var(--ds-canvas);
+  --bs-btn-hover-bg: var(--ds-primary);
+  --bs-btn-hover-border-color: var(--ds-primary);
+  --bs-btn-hover-color: var(--ds-on-primary);
+  --bs-btn-active-bg: var(--ds-primary-press);
+  --bs-btn-active-border-color: var(--ds-primary-press);
+}
+
+.btn-outline-secondary {
+  --bs-btn-color: var(--ds-ink-secondary);
+  --bs-btn-border-color: var(--ds-hairline-input);
+  --bs-btn-bg: var(--ds-canvas);
+  --bs-btn-hover-bg: var(--ds-canvas-soft);
+  --bs-btn-hover-border-color: var(--ds-ink-mute);
+  --bs-btn-hover-color: var(--ds-ink);
+  --bs-btn-active-bg: var(--ds-canvas-soft);
+  --bs-btn-active-color: var(--ds-ink);
+}
+
+.btn-outline-danger {
+  --bs-btn-color: var(--ds-danger);
+  --bs-btn-border-color: var(--ds-danger);
+  --bs-btn-bg: var(--ds-canvas);
+  --bs-btn-hover-bg: var(--ds-danger);
+  --bs-btn-hover-border-color: var(--ds-danger);
+  --bs-btn-hover-color: var(--ds-on-primary);
+}
+
+.btn-danger {
+  --bs-btn-bg: var(--ds-danger);
+  --bs-btn-border-color: var(--ds-danger);
+  --bs-btn-hover-bg: #c8174f;
+  --bs-btn-hover-border-color: #c8174f;
+  --bs-btn-active-bg: #a81243;
+}
+
+.btn-success {
+  --bs-btn-bg: var(--ds-success);
+  --bs-btn-border-color: var(--ds-success);
+  --bs-btn-hover-bg: #14664f;
+  --bs-btn-hover-border-color: #14664f;
+}
+
+.btn-secondary {
+  --bs-btn-bg: var(--ds-ink-secondary);
+  --bs-btn-border-color: var(--ds-ink-secondary);
+  --bs-btn-hover-bg: var(--ds-ink);
+  --bs-btn-hover-border-color: var(--ds-ink);
+}
+
+/* button-on-dark — para superficies del track oscuro. */
+.btn-on-dark {
+  --bs-btn-bg: var(--ds-brand-dark-900);
+  --bs-btn-border-color: var(--ds-brand-dark-900);
+  --bs-btn-color: var(--ds-on-primary);
+  --bs-btn-hover-bg: var(--ds-primary-press);
+  --bs-btn-hover-border-color: var(--ds-primary-press);
+  --bs-btn-hover-color: var(--ds-on-primary);
+}
+
+.btn-light {
+  --bs-btn-bg: var(--ds-canvas);
+  --bs-btn-border-color: var(--ds-canvas);
+  --bs-btn-color: var(--ds-primary);
+  --bs-btn-hover-bg: var(--ds-canvas-soft);
+  --bs-btn-hover-border-color: var(--ds-canvas-soft);
+  --bs-btn-hover-color: var(--ds-primary-deep);
+}
+
+/* --------------------------------------------------------------------------
+   5. Tarjetas y contenedores
+   -------------------------------------------------------------------------- */
+.card {
+  --bs-card-bg: var(--ds-canvas);
+  --bs-card-border-color: var(--ds-hairline);
+  --bs-card-border-radius: var(--ds-radius-lg);
+  --bs-card-inner-border-radius: var(--ds-radius-lg);
+  --bs-card-spacer-y: var(--ds-space-xl);
+  --bs-card-spacer-x: var(--ds-space-xl);
+  --bs-card-cap-bg: var(--ds-canvas);
+  --bs-card-cap-padding-y: var(--ds-space-md);
+  --bs-card-cap-padding-x: var(--ds-space-xl);
+  color: var(--ds-ink);
+}
+
+/* Niveles de elevación del DESIGN.md; reemplazan las sombras de Bootstrap. */
+.shadow-sm { box-shadow: var(--ds-elev-1) !important; }
+.shadow    { box-shadow: var(--ds-elev-2) !important; }
+
+.card-header {
+  font-size: 18px;                  /* heading-sm */
+  font-weight: 400;
+  line-height: 1.4;
+  color: var(--ds-ink);
+  border-bottom-color: var(--ds-hairline);
+}
+
+/* card-cream-band — el interludio cálido del sistema. */
+.card-cream-band {
+  background: var(--ds-canvas-cream);
+  color: var(--ds-ink);
+  border: 0;
+  border-radius: var(--ds-radius-lg);
+  padding: var(--ds-space-xxl);
+}
+
+/* card-dashboard-mockup — panel de datos denso. */
+.card-dashboard {
+  background: var(--ds-canvas);
+  border-radius: var(--ds-radius-lg);
+  padding: var(--ds-space-xl);
+  box-shadow: var(--ds-elev-2);
+  font-feature-settings: "tnum";
+  font-size: 14px;
+  letter-spacing: -.42px;
+}
+
+/* --------------------------------------------------------------------------
+   6. Stat cards — valor display-md tabular, etiqueta micro-cap
+   -------------------------------------------------------------------------- */
+.stat-card .value {
+  font-size: 26px;
+  font-weight: 300;
+  line-height: 1.12;
+  letter-spacing: -.26px;
+  font-feature-settings: "tnum";
+  color: var(--ds-ink);
+}
+.stat-card .label {
+  font-size: var(--ds-label-size);
+  font-weight: 400;
+  line-height: 1.15;
+  letter-spacing: .1px;
+  text-transform: uppercase;
+  color: var(--ds-ink-mute);
+  margin-top: var(--ds-space-xs);
+}
+.stat-card .value.is-success { color: var(--ds-success); }
+.stat-card .value.is-warning { color: var(--ds-warning); }
+.stat-card .value.is-danger  { color: var(--ds-danger);  }
+.stat-card .value.is-info    { color: var(--ds-primary-soft); }
+
+/* --------------------------------------------------------------------------
+   7. Tablas — hairline, encabezado micro-cap, cuerpo tabular
+   -------------------------------------------------------------------------- */
+.table {
+  --bs-table-color: var(--ds-ink);
+  --bs-table-bg: transparent;
+  --bs-table-border-color: var(--ds-hairline);
+  --bs-table-hover-bg: var(--ds-canvas-soft);
+  --bs-table-hover-color: var(--ds-ink);
+  font-size: 14px;                  /* body-tabular */
+}
+
+.table thead th {
+  background: var(--ds-canvas-soft);
+  /* El DESIGN.md pide ink-mute para etiquetas de tabla, pero sobre
+     canvas-soft da 4.49:1 — justo bajo AA, y aquí el texto va a 10px.
+     ink-secondary sube a 11.1:1 manteniendo la jerarquía. */
+  color: var(--ds-ink-secondary);
+  font-size: var(--ds-label-size);
+  font-weight: 400;
+  line-height: 1.15;
+  letter-spacing: .1px;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--ds-hairline);
+  padding-top: var(--ds-space-md);
+  padding-bottom: var(--ds-space-md);
+  white-space: nowrap;
+}
+
+.table tbody td {
+  border-color: var(--ds-hairline);
+  vertical-align: middle;
+}
+
+/* --------------------------------------------------------------------------
+   8. Formularios — radio 6px, borde hairline-input, foco indigo
+   -------------------------------------------------------------------------- */
+.form-control, .form-select {
+  background-color: var(--ds-canvas);
+  color: var(--ds-ink);
+  font-size: 15px;                  /* body-md */
+  font-weight: var(--ds-body-weight);
+  line-height: 1.4;
+  padding: var(--ds-space-sm) var(--ds-space-md);
+  border: 1px solid var(--ds-hairline-input);
+  border-radius: var(--ds-radius-sm);
+  min-height: 40px;                 /* touch target del DESIGN.md */
+}
+
+.form-control:focus, .form-select:focus {
+  border-color: var(--ds-primary);
+  box-shadow: 0 0 0 3px var(--bs-focus-ring-color);
+  color: var(--ds-ink);
+}
+
+.form-control::placeholder { color: var(--ds-ink-mute); opacity: 1; }
+
+.form-control-sm, .form-select-sm {
+  font-size: 14px;
+  min-height: 36px;
+  padding: 6px var(--ds-space-md);
+}
+
+.form-label {
+  font-size: 13px;                  /* caption */
+  font-weight: 400;
+  letter-spacing: -.39px;
+  color: var(--ds-ink-secondary);
+  margin-bottom: var(--ds-space-xs);
+}
+
+.form-text { font-size: 13px; color: var(--ds-ink-mute); }
+
+.form-check-input { border-color: var(--ds-hairline-input); }
+.form-check-input:checked {
+  background-color: var(--ds-primary);
+  border-color: var(--ds-primary);
+}
+.form-check-input:focus {
+  border-color: var(--ds-primary);
+  box-shadow: 0 0 0 3px var(--bs-focus-ring-color);
+}
+.form-check-label { font-size: 15px; color: var(--ds-ink-secondary); }
+
+/* --------------------------------------------------------------------------
+   9. Badges y pills — pill-tag-soft
+   -------------------------------------------------------------------------- */
+.badge {
+  font-size: var(--ds-label-size);
+  font-weight: 400;
+  line-height: 1.15;
+  letter-spacing: .1px;
+  text-transform: uppercase;
+  padding: var(--ds-space-xs) var(--ds-space-sm);
+  border-radius: var(--ds-radius-pill);
+}
+
+/* Los estados se leen mejor en versión suave que en fill saturado sobre
+   tablas densas: fondo subdued + texto de alto contraste. El texto usa la
+   variante -text porque a 10px hace falta AA (4.5:1), no AA-large. */
+.badge.bg-success   { background: var(--ds-success-bg) !important; color: var(--ds-success-text); }
+.badge.bg-warning   { background: var(--ds-warning-bg) !important; color: var(--ds-warning-text); }
+.badge.bg-danger    { background: var(--ds-danger-bg)  !important; color: var(--ds-danger-text);  }
+.badge.bg-info      { background: var(--ds-info-bg)    !important; color: var(--ds-info-text); }
+.badge.bg-secondary { background: var(--ds-canvas-soft) !important; color: var(--ds-ink-secondary); border: 1px solid var(--ds-hairline); }
+.badge.bg-light     { background: var(--ds-canvas-soft) !important; color: var(--ds-ink-secondary); border: 1px solid var(--ds-hairline); }
+.badge.bg-secondary-subtle { background: var(--ds-canvas-soft) !important; color: var(--ds-ink-secondary); border: 1px solid var(--ds-hairline); }
+/* .text-dark y .text-secondary acompañan a los badges en las plantillas;
+   manda el token para no perder el contraste calculado. */
+.badge.bg-warning.text-dark { color: var(--ds-warning-text) !important; }
+.badge.bg-light.text-dark { color: var(--ds-ink-secondary) !important; }
+.badge.bg-secondary-subtle.text-secondary { color: var(--ds-ink-secondary) !important; }
+
+.pill-tag-soft {
+  display: inline-block;
+  background: var(--ds-primary-subdued);
+  color: var(--ds-primary-deep);
+  font-size: var(--ds-label-size);
+  font-weight: 400;
+  line-height: 1.15;
+  letter-spacing: .1px;
+  text-transform: uppercase;
+  padding: var(--ds-space-xs) var(--ds-space-sm);
+  border-radius: var(--ds-radius-pill);
+}
+
+/* --------------------------------------------------------------------------
+   10. Alertas — radio md 8px
+   -------------------------------------------------------------------------- */
+.alert {
+  --bs-alert-border-radius: var(--ds-radius-md);
+  font-size: 15px;
+  border-width: 1px;
+}
+
+/* --------------------------------------------------------------------------
+   11. Chrome de la app — navbar y sidebar (track oscuro del dashboard)
+   -------------------------------------------------------------------------- */
+.app-navbar {
+  background: var(--ds-brand-dark-900);
+  padding: var(--ds-space-lg) var(--ds-space-xl);
+}
+.app-navbar .navbar-brand {
+  color: var(--ds-on-primary);
+  font-size: 18px;
+  font-weight: 400;
+  letter-spacing: -.2px;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ds-space-sm);
+}
+.app-navbar .navbar-brand:hover { color: var(--ds-on-primary); }
+.app-navbar .app-user {
+  font-size: 13px;
+  font-weight: 300;
+  letter-spacing: -.39px;
+  color: var(--ds-hairline-input);
+}
+
+.sidebar {
+  background: var(--ds-canvas);
+  border: 1px solid var(--ds-hairline);
+  border-radius: var(--ds-radius-lg);
+  padding: var(--ds-space-sm);
+  box-shadow: var(--ds-elev-1);
+}
+.sidebar .nav-link {
+  color: var(--ds-ink-secondary);
+  font-size: 15px;
+  font-weight: var(--ds-body-weight);
+  border-radius: var(--ds-radius-md);
+  padding: var(--ds-space-sm) var(--ds-space-md);
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-sm);
+  min-height: 40px;
+}
+.sidebar .nav-link:hover { background: var(--ds-canvas-soft); color: var(--ds-ink); }
+/* El indigo relleno se reserva para CTAs: el ítem activo usa el fill
+   subdued documentado en pill-tag-soft más una barra de acento. */
+.sidebar .nav-link.active {
+  background: var(--ds-info-bg);
+  color: var(--ds-primary-deep);
+  font-weight: 400;
+  box-shadow: inset 3px 0 0 var(--ds-primary);
+}
+.sidebar .nav-link i { color: var(--ds-ink-mute); }
+.sidebar .nav-link.active i { color: var(--ds-primary); }
+
+.page-title {
+  font-size: 26px;                  /* display-md */
+  font-weight: 300;
+  line-height: 1.12;
+  letter-spacing: -.26px;
+  color: var(--ds-ink);
+  margin: 0;
+}
+
+/* --------------------------------------------------------------------------
+   12. Gradient mesh — el medio de profundidad de la marca
+   El mesh real usa formas orgánicas no renderizables con un gradiente CSS
+   plano; se aproxima con radial-gradients superpuestos siguiendo el orden
+   de stops documentado: crema -> sherbet -> lavanda -> índigo -> ruby ->
+   magenta.
+   -------------------------------------------------------------------------- */
+.ds-mesh {
+  background-color: var(--ds-canvas);
+  background-image:
+    radial-gradient(58% 78% at  8% 16%, rgba(245, 233, 212, .95) 0%, rgba(245, 233, 212, 0) 62%),
+    radial-gradient(52% 70% at 27%  6%, rgba(155, 104,  41, .30) 0%, rgba(155, 104,  41, 0) 64%),
+    radial-gradient(56% 76% at 48% 20%, rgba(185, 185, 249, .85) 0%, rgba(185, 185, 249, 0) 66%),
+    radial-gradient(50% 68% at 70%  4%, rgba( 83,  58, 253, .50) 0%, rgba( 83,  58, 253, 0) 62%),
+    radial-gradient(46% 64% at 86% 24%, rgba(234,  34,  97, .38) 0%, rgba(234,  34,  97, 0) 64%),
+    radial-gradient(40% 56% at 99%  6%, rgba(249, 107, 238, .34) 0%, rgba(249, 107, 238, 0) 60%);
+  background-repeat: no-repeat;
+  background-size: 100% 38vh;
+  background-position: top center;
+}
+
+/* --------------------------------------------------------------------------
+   13. Track oscuro — monitor en vivo
+   El DESIGN.md define las superficies de producto en navy profundo; el
+   monitor es exactamente esa superficie.
+   -------------------------------------------------------------------------- */
+.mon-wrap {
+  background: var(--ds-dark-canvas);
+  border-radius: var(--ds-radius-xl);
+  color: var(--ds-dark-text);
+  overflow: hidden;
+  box-shadow: var(--ds-elev-2);
+}
+/* Los encabezados heredan ink (navy) del sistema; sobre el track oscuro hay
+   que devolverlos al color claro o desaparecen contra el fondo. */
+.mon-wrap h1, .mon-wrap h2, .mon-wrap h3,
+.mon-wrap h4, .mon-wrap h5, .mon-wrap h6 { color: var(--ds-dark-text); }
+
+/* --------------------------------------------------------------------------
+   13b. Pestañas y dropdowns
+   -------------------------------------------------------------------------- */
+.nav-pills {
+  --bs-nav-pills-border-radius: var(--ds-radius-pill);
+  --bs-nav-pills-link-active-bg: var(--ds-primary);
+  --bs-nav-pills-link-active-color: var(--ds-on-primary);
+}
+.nav-pills .nav-link {
+  color: var(--ds-ink-secondary);
+  font-size: 15px;
+  font-weight: 400;
+  padding: var(--ds-space-sm) var(--ds-space-lg);
+}
+.nav-pills .nav-link:hover { color: var(--ds-primary-deep); }
+
+.dropdown-menu {
+  --bs-dropdown-border-color: var(--ds-hairline);
+  --bs-dropdown-border-radius: var(--ds-radius-md);
+  --bs-dropdown-link-color: var(--ds-ink-secondary);
+  --bs-dropdown-link-hover-bg: var(--ds-canvas-soft);
+  --bs-dropdown-link-active-bg: var(--ds-info-bg);
+  --bs-dropdown-link-active-color: var(--ds-primary-deep);
+  --bs-dropdown-font-size: 15px;
+  box-shadow: var(--ds-elev-2);
+}
+
+/* --------------------------------------------------------------------------
+   14. Responsive — el display baja de escalón por breakpoint
+   -------------------------------------------------------------------------- */
+@media (max-width: 1023.98px) {
+  .ds-hero { font-size: 48px; letter-spacing: -.96px; }
+  h1, .ds-display-xl { font-size: 32px; letter-spacing: -.64px; }
+}
+
+@media (max-width: 767.98px) {
+  .ds-hero { font-size: 36px; letter-spacing: -.7px; }
+  h1, .ds-display-xl { font-size: 26px; letter-spacing: -.26px; }
+  h2, .ds-display-lg { font-size: 22px; letter-spacing: -.22px; }
+  .page-title { font-size: 22px; letter-spacing: -.22px; }
+  /* WCAG AAA en táctil: los pill suben a 44px. */
+  .btn, .btn-sm { min-height: 44px; }
+  .card { --bs-card-spacer-x: var(--ds-space-lg); --bs-card-spacer-y: var(--ds-space-lg); }
+  .ds-mesh { background-size: 100% 30vh; }
+}

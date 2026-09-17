@@ -1,0 +1,101 @@
+{% extends 'base.html' %}
+{% block title %}Turnos y empresas · {{ station.name }}{% endblock %}
+{% block nav_config %}active{% endblock %}
+
+{% block content %}
+{% with tab='schedules' %}{% include 'webapp/config/_station_tabs.html' %}{% endwith %}
+
+<div class="d-flex justify-content-between align-items-center mb-2">
+  <h5 class="mb-0">Turnos programados</h5>
+  <a href="{% url 'webapp:schedule_create' station.pk %}" class="btn btn-primary btn-sm"><i class="bi bi-plus-lg"></i> Nuevo turno</a>
+</div>
+<p class="small text-muted">
+  Los turnos se inician y cierran solos en el terminal según su horario. En cada turno se define qué empresas pueden
+  retirar colación y si admite visitas (tarjeta RFID): <strong>todo lo demás queda NO AUTORIZADO</strong> al marcar.
+</p>
+
+<div class="card shadow-sm">
+  <div class="table-responsive">
+    <table class="table table-hover mb-0 align-middle">
+      <thead><tr><th>Turno</th><th>Horario</th><th>Días</th><th>Estado</th><th>Empresas autorizadas</th><th>Visitas</th><th class="text-end">Acciones</th></tr></thead>
+      <tbody>
+        {% for s in schedules %}
+        <tr>
+          <td class="fw-semibold">{{ s.name }}
+            {% if s.is_lunch %}<span class="badge text-bg-warning ms-1" title="Aquí retiran las personas con colación «solo almuerzo»"><i class="bi bi-egg-fried"></i> Almuerzo</span>{% endif %}
+          </td>
+          <td><code>{{ s.time_range }}</code></td>
+          <td class="small">{{ s.days_text }}</td>
+          <td>{% if s.enabled %}<span class="badge text-bg-success">Habilitado</span>{% else %}<span class="badge text-bg-secondary">Deshabilitado</span>{% endif %}</td>
+          <td>
+            {% if s.all_companies %}
+              <span class="badge text-bg-primary">Todas las empresas</span>
+            {% else %}
+              {% for c in s.companies.all %}
+                <span class="badge rounded-pill text-bg-light border">{{ c.company|default:"(Sin empresa)" }}</span>
+              {% empty %}
+                <span class="badge text-bg-danger">Ninguna empresa autorizada</span>
+              {% endfor %}
+            {% endif %}
+          </td>
+          <td>{% if s.allow_visitors %}<i class="bi bi-check-circle-fill text-success"></i> Admite{% else %}<i class="bi bi-x-circle text-danger"></i> No admite{% endif %}</td>
+          <td class="text-end text-nowrap">
+            <a href="{% url 'webapp:schedule_edit' station.pk s.pk %}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-pencil"></i> Editar</a>
+            <a href="{% url 'webapp:schedule_delete' station.pk s.pk %}" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></a>
+          </td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="7" class="text-muted text-center py-3">
+          Sin turnos programados. Crea el primero, o define los turnos en el terminal (pestaña Turnos): llegarán aquí en su próxima sincronización.
+        </td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card shadow-sm mt-3">
+  <div class="card-header bg-white fw-semibold"><i class="bi bi-hourglass-split"></i> Cierre de turnos</div>
+  <div class="card-body">
+    <div class="row g-3 align-items-start">
+      <div class="col-lg-7 ds-caption">
+        <p class="mb-1">Cuando termina el horario de un turno, el terminal decide así:</p>
+        <ul class="mb-1 ps-3">
+          <li>Si empieza el turno siguiente, el turno en curso <strong>se cierra de inmediato</strong>
+              y queda registrado como reemplazado.</li>
+          <li>Si no hay otro turno a continuación, el turno sigue abierto durante la
+              <strong>prórroga</strong>. Treinta segundos antes del cierre, el terminal
+              pregunta en pantalla si se extiende; sin respuesta, se cierra solo.</li>
+        </ul>
+        <p class="mb-0">Este valor también se puede editar en el terminal (Configuración → Turnos).</p>
+      </div>
+      <div class="col-lg-5">
+        <form method="post" class="row g-2 align-items-end">
+          {% csrf_token %}
+          <div class="col-7">
+            <label class="form-label ds-micro-cap">Prórroga (minutos)</label>
+            {{ overtime_form.shift_overtime_minutes }}
+            {% for e in overtime_form.shift_overtime_minutes.errors %}
+              <div class="text-danger small">{{ e }}</div>
+            {% endfor %}
+          </div>
+          <div class="col-5 d-grid">
+            <button type="submit" class="btn btn-primary btn-sm"><i class="bi bi-save"></i> Guardar</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm mt-3">
+  <div class="card-header bg-white fw-semibold"><i class="bi bi-buildings"></i> Empresas conocidas por la estación</div>
+  <div class="card-body small">
+    {% for c in known_companies %}
+      <span class="badge rounded-pill text-bg-light border me-1 mb-1">{{ c|default:"(Sin empresa)" }}</span>
+    {% empty %}
+      <span class="text-muted">La estación aún no ha sincronizado personas. Las empresas provienen de la ficha de personas (HikCentral).</span>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

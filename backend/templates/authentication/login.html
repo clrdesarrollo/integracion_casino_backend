@@ -1,0 +1,43 @@
+{% extends 'base.html' %}
+{% block title %}Ingreso · Casino Backoffice{% endblock %}
+
+{# El DESIGN.md exige el gradient mesh en toda portada: el login es la única
+   superficie tipo hero del backoffice. #}
+{% block body_class %}ds-mesh{% endblock %}
+
+{% block auth_content %}
+<div class="d-flex align-items-center justify-content-center" style="min-height: 100vh;">
+  <div class="card shadow" style="width: 380px;">
+    <div class="card-body">
+      <div class="text-center mb-4">
+        <i class="bi bi-cup-hot" style="font-size: 2.5rem; color: var(--ds-primary);"></i>
+        <h4 class="mt-2 mb-1">Casino · Backoffice</h4>
+        <p class="ds-caption mb-0">Control de colaciones</p>
+      </div>
+
+      {% if messages %}
+        {% for message in messages %}
+          <div class="alert alert-{{ message.tags }} py-2">{{ message }}</div>
+        {% endfor %}
+      {% endif %}
+
+      <form method="post">
+        {% csrf_token %}
+        {# conserva la página que el usuario pedía antes de que se le pidiera ingresar #}
+        {% if request.GET.next %}<input type="hidden" name="next" value="{{ request.GET.next }}">{% endif %}
+        <div class="mb-3">
+          <label class="form-label">{{ form.email.label }}</label>
+          {{ form.email }}
+        </div>
+        <div class="mb-3">
+          <label class="form-label">{{ form.password.label }}</label>
+          {{ form.password }}
+        </div>
+        <button type="submit" class="btn btn-primary w-100">
+          <i class="bi bi-box-arrow-in-right"></i> Ingresar
+        </button>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}
