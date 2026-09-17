@@ -1,0 +1,61 @@
+services:
+
+  pgdb:
+    build:
+      dockerfile: ./docker/postgresql/Dockerfile
+      context: .
+    container_name: "casino_pgdb"
+    env_file:
+      - variables.env
+    ports:
+      - "5433:5432"
+    restart: always
+    volumes:
+      - ./docker/postgresql/data/:/var/lib/postgresql/data/:z
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: "casino_redis"
+    restart: always
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  web:
+    container_name: "casino_backend"
+    build:
+      dockerfile: ./docker/web/Dockerfile
+      context: .
+    command: >
+      sh -c "/entrypoint.sh"
+    volumes:
+      - .:/app
+      - static_volume:/app/staticfiles
+      - media_volume:/app/backend/media
+    ports:
+      - "8010:8000"
+    env_file:
+      - variables.env
+    depends_on:
+      pgdb:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8000/api/healthcheck/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+volumes:
+  static_volume:
+  media_volume:

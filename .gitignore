@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Django
+*.log
+db.sqlite3
+staticfiles/
+backend/media/*
+!backend/media/.gitkeep
+
+# Docker / DB data
+docker/**/data/
+
+# Entornos
+.env
+variables.env
+variables.env.local
+
+# Editores
+.idea/
+.vscode/
+.history
+
+# Reportes generados localmente
+*.pdf
+*.xlsx

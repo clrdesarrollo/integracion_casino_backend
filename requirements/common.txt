@@ -1,0 +1,19 @@
+django==5.0.14
+psycopg2-binary==2.9.9
+djangorestframework==3.15.2
+djangorestframework-api-key==3.0.0
+
+gunicorn==23.0.0
+whitenoise==6.7.0
+
+# Tiempo real (WebSocket vía Django Channels + Redis)
+channels==4.1.0
+channels-redis==4.2.0
+# redis-py 8 puso socket_timeout=5s por defecto, lo que corta el BZPOPMIN de 5s
+# de channels-redis y tumba los consumers ("Timeout reading from redis:6379").
+redis==5.2.1
+daphne==4.1.2
+
+# Reportería
+reportlab==4.2.5
+xlsxwriter==3.2.0
