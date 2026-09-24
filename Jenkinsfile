@@ -1,5 +1,7 @@
 pipeline {
-    agent any
+    // Todo el pipeline es sh + docker: no puede caer en el nodo Windows.
+    // (El nombre de cada nodo funciona como label implícito en Jenkins.)
+    agent { label '!jnknode-windows' }
 
     options {
         buildDiscarder logRotator(artifactNumToKeepStr: '10', numToKeepStr: '10')
