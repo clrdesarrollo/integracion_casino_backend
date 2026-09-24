@@ -30,3 +30,7 @@ variables.env.local
 # Reportes generados localmente
 *.pdf
 *.xlsx
+
+# Salidas del pipeline de Jenkins
+reports/
+version

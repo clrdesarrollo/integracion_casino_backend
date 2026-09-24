@@ -17,3 +17,7 @@ daphne==4.1.2
 # Reportería
 reportlab==4.2.5
 xlsxwriter==3.2.0
+
+# Pruebas (van en la imagen para que Jenkins pruebe exactamente lo que se publica)
+pytest==9.0.2
+pytest-django==4.11.1
