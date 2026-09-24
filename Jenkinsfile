@@ -15,8 +15,8 @@ pipeline {
         IMAGE_TAG       = "1.0.${BUILD_NUMBER}"
         DOCKERFILE      = './docker/web/Dockerfile'
 
-        // cache tag para buildx (en el mismo registry)
-        BUILDCACHE_REF  = "${DOCKER_REGISTRY}/${IMAGE_NAME}:buildcache"
+        IMAGE_REF       = "${DOCKER_REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}"
+        IMAGE_LATEST    = "${DOCKER_REGISTRY}/${IMAGE_NAME}:latest"
     }
 
     stages {
@@ -33,13 +33,39 @@ pipeline {
             }
         }
 
+        stage('Preparing...') {
+            steps {
+                sh """
+                    set -e
+                    echo "${IMAGE_TAG}" > ./version
+                    cat ./version
+
+                    # Por si el entrypoint llega con finales de línea CRLF desde Windows.
+                    dos2unix ./docker/web/entrypoint.sh || true
+                    chmod +x ./docker/web/entrypoint.sh || true
+                """
+            }
+        }
+
+        // Se construye UNA sola vez con el builder por defecto del nodo: esa misma imagen se
+        // prueba y se publica. (No se usa buildx con driver docker-container: el BuildKit
+        // reciente que descarga no arranca contenedores con el kernel de jenkinsnode-01.)
+        // La caché de capas queda en el propio nodo.
+        stage('Build') {
+            steps {
+                sh '''
+                    set -e
+                    docker build -f "${DOCKERFILE}" -t "${IMAGE_REF}" -t "${IMAGE_LATEST}" .
+                '''
+            }
+        }
+
         stage('Tests') {
             environment {
                 CI_NET     = "casinoci-${BUILD_NUMBER}"
                 CI_DB      = "casinoci-db-${BUILD_NUMBER}"
                 CI_REDIS   = "casinoci-redis-${BUILD_NUMBER}"
                 CI_RUNNER  = "casinoci-tests-${BUILD_NUMBER}"
-                TEST_IMAGE = "casino-backend-test:${BUILD_NUMBER}"
 
                 // Credenciales de la base efímera: viven y mueren con el build.
                 TEST_DB_NAME = 'casinotest'
@@ -75,9 +101,6 @@ pipeline {
                         sleep 2
                     done
 
-                    # Misma imagen que se publica, para probar lo que realmente se despliega.
-                    docker build -f "${DOCKERFILE}" -t "${TEST_IMAGE}" .
-
                     rm -rf reports && mkdir -p reports
 
                     # El reporte se deja en /tmp del contenedor y se extrae después con
@@ -94,7 +117,7 @@ pipeline {
                         -e DEBUG=0 \
                         -e ALLOWED_HOSTS='*' \
                         -e DJANGO_SECRET_KEY=ci-build-secret-not-used-in-deploy \
-                        "${TEST_IMAGE}" \
+                        "${IMAGE_REF}" \
                         pytest backend/apps -p no:cacheprovider --junitxml=/tmp/junit.xml
                     TEST_RC=$?
                     set -e
@@ -110,23 +133,8 @@ pipeline {
                     sh '''
                         docker rm -f "${CI_RUNNER}" "${CI_DB}" "${CI_REDIS}" >/dev/null 2>&1 || true
                         docker network rm "${CI_NET}" >/dev/null 2>&1 || true
-                        docker image rm -f "${TEST_IMAGE}" >/dev/null 2>&1 || true
                     '''
                 }
-            }
-        }
-
-        stage('Preparing...') {
-            steps {
-                sh """
-                    set -e
-                    echo "${IMAGE_TAG}" > ./version
-                    cat ./version
-
-                    # Por si el entrypoint llega con finales de línea CRLF desde Windows.
-                    dos2unix ./docker/web/entrypoint.sh || true
-                    chmod +x ./docker/web/entrypoint.sh || true
-                """
             }
         }
 
@@ -143,30 +151,13 @@ pipeline {
             }
         }
 
-        stage('Build & Push (single image + buildx cache)') {
+        stage('Push') {
             steps {
-                sh """
+                sh '''
                     set -e
-                    export DOCKER_BUILDKIT=1
-
-                    # Usa builder si existe, si no lo crea (sin fallar)
-                    if docker buildx inspect casinobuilder >/dev/null 2>&1; then
-                        docker buildx use casinobuilder
-                    else
-                        docker buildx create --name casinobuilder --driver docker-container --use
-                    fi
-
-                    docker buildx inspect --bootstrap
-
-                    docker buildx build \\
-                        --cache-from=type=registry,ref=${BUILDCACHE_REF} \\
-                        --cache-to=type=registry,ref=${BUILDCACHE_REF},mode=max \\
-                        -t ${DOCKER_REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG} \\
-                        -t ${DOCKER_REGISTRY}/${IMAGE_NAME}:latest \\
-                        -f ${DOCKERFILE} \\
-                        --push \\
-                        .
-                """
+                    docker push "${IMAGE_REF}"
+                    docker push "${IMAGE_LATEST}"
+                '''
             }
         }
 
@@ -186,10 +177,14 @@ pipeline {
 
     post {
         success {
-            echo "Imagen publicada: ${DOCKER_REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG} (y :latest)"
+            echo "Imagen publicada: ${IMAGE_REF} (y :latest)"
         }
         always {
-            sh "docker logout ${DOCKER_REGISTRY} || true"
+            // Se quita solo el tag versionado; :latest conserva las capas como caché del próximo build.
+            sh '''
+                docker image rm "${IMAGE_REF}" >/dev/null 2>&1 || true
+                docker logout "${DOCKER_REGISTRY}" || true
+            '''
         }
     }
 }
