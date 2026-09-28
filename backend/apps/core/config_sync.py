@@ -59,6 +59,7 @@ def serialize_config(station: Station) -> dict:
             'all_companies': s.all_companies,
             'allow_visitors': s.allow_visitors,
             'is_lunch': s.is_lunch,
+            'manual_entry': s.manual_entry,
             'companies': [c.company for c in s.companies.all()],
         })
     cards = []
@@ -100,6 +101,8 @@ def apply_config(station: Station, data: dict, updated_at) -> None:
             # un terminal antiguo no manda is_lunch: se decide por el nombre del turno
             is_lunch=(ShiftSchedule.looks_like_lunch(s.get('name'))
                       if s.get('is_lunch') is None else bool(s['is_lunch'])),
+            # un terminal antiguo no manda manual_entry: turno normal (no sabe registrar a mano)
+            manual_entry=bool(s.get('manual_entry') or False),
             order=i,
         )
         seen = set()

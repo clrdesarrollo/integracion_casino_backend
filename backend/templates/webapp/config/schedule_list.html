@@ -23,6 +23,7 @@
         <tr>
           <td class="fw-semibold">{{ s.name }}
             {% if s.is_lunch %}<span class="badge text-bg-warning ms-1" title="Aquí retiran las personas con colación «solo almuerzo»"><i class="bi bi-egg-fried"></i> Almuerzo</span>{% endif %}
+            {% if s.manual_entry %}<span class="badge text-bg-info ms-1" title="Nadie marca: la cocinera ingresa la cantidad de colaciones en el terminal"><i class="bi bi-pencil-square"></i> Ingreso manual</span>{% endif %}
           </td>
           <td><code>{{ s.time_range }}</code></td>
           <td class="small">{{ s.days_text }}</td>

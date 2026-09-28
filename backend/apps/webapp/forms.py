@@ -118,6 +118,13 @@ class ShiftScheduleForm(forms.Form):
         help_text='Las personas con colación «solo almuerzo» (campo Colacion = 1 en HikCentral) '
                   'solo pueden retirar en los turnos marcados como almuerzo.',
     )
+    manual_entry = forms.BooleanField(
+        label='Ingreso manual (sin marcación)', required=False, initial=False,
+        widget=forms.CheckboxInput(attrs=_CHECK),
+        help_text='Para turnos sin acceso de personas (p. ej. la once que se deja preparada fuera '
+                  'del casino): en el terminal no se abre el turno, la cocinera ingresa la cantidad '
+                  'de colaciones. Nunca se abre solo por horario.',
+    )
     all_companies = forms.BooleanField(
         label='Todas las empresas', required=False, initial=True,
         widget=forms.CheckboxInput(attrs=_CHECK),
@@ -159,6 +166,7 @@ class ShiftScheduleForm(forms.Form):
                 'days': [str(i) for i in range(7) if instance.days_mask & (1 << i)],
                 'allow_visitors': instance.allow_visitors,
                 'is_lunch': instance.is_lunch,
+                'manual_entry': instance.manual_entry,
                 'all_companies': instance.all_companies,
                 'companies': [c for c in current],
             })
@@ -203,6 +211,7 @@ class ShiftScheduleForm(forms.Form):
         obj.days_mask = self.days_mask()
         obj.allow_visitors = d['allow_visitors']
         obj.is_lunch = d['is_lunch']
+        obj.manual_entry = d['manual_entry']
         obj.all_companies = d['all_companies']
         obj.save()
         obj.companies.all().delete()

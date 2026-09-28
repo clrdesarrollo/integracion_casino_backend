@@ -288,6 +288,7 @@ class Shift(models.Model):
         REPLACED = 'reemplazado', 'Reemplazado por el turno siguiente'
         EXPIRED = 'expirado', 'Cerrado al vencer la prórroga'
         INTERRUPTED = 'interrumpido', 'Interrumpido (terminal caído)'
+        MANUAL_ENTRY = 'ingreso_manual', 'Ingreso manual de colaciones'
 
     station = models.ForeignKey(Station, on_delete=models.CASCADE, related_name='shifts')
     # Identidad global de la apertura, generada por la estación. Es la clave de ingesta:
@@ -308,6 +309,10 @@ class Shift(models.Model):
     )
     # Apertura anterior cuando esta es una reapertura (quedó un comensal fuera).
     reopened_from_uid = models.CharField('reapertura de', max_length=40, blank=True, default='')
+    # Turno de ingreso manual (ShiftSchedule.manual_entry): nadie marca y la cocinera registra
+    # la cantidad de colaciones preparadas. El registro nace cerrado y sin marcaciones; esta
+    # cantidad es lo que se contabiliza. NULL = turno normal, con marcaciones.
+    manual_count = models.PositiveIntegerField('colaciones ingreso manual', blank=True, null=True)
 
     class Meta:
         db_table = 'tb_shift'
@@ -338,6 +343,10 @@ class Shift(models.Model):
     @property
     def is_reopening(self):
         return bool(self.reopened_from_uid)
+
+    @property
+    def is_manual_entry(self):
+        return self.manual_count is not None
 
     @property
     def duration_text(self):
@@ -450,6 +459,13 @@ class ShiftSchedule(models.Model):
         'es el turno de almuerzo', default=False,
         help_text='Las personas con colación «solo almuerzo» en HikCentral solo pueden '
                   'retirar en los turnos marcados como almuerzo.',
+    )
+    # Turno sin acceso de personas (p. ej. la once, que se deja preparada fuera del casino):
+    # en el terminal no se abre, la cocinera registra la cantidad de colaciones.
+    manual_entry = models.BooleanField(
+        'ingreso manual', default=False,
+        help_text='Nadie marca en este turno: en el terminal la cocinera ingresa la cantidad '
+                  'de colaciones que deja preparadas. Nunca se abre solo por horario.',
     )
     # Días en que se sirve el turno, como máscara de bits: bit 0 = lunes … bit 6 = domingo
     # (mismo orden que datetime.weekday()). 127 = todos los días.

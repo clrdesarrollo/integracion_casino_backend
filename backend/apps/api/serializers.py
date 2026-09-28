@@ -46,6 +46,10 @@ class ShiftSyncSerializer(serializers.Serializer):
     reopened_from_uid = serializers.CharField(
         max_length=40, allow_blank=True, required=False, default='',
     )
+    # Colaciones de un registro de ingreso manual (turno sin marcaciones). null = turno normal.
+    manual_count = serializers.IntegerField(
+        min_value=0, required=False, allow_null=True, default=None,
+    )
 
 
 class EventSyncSerializer(serializers.Serializer):
@@ -97,6 +101,8 @@ class ScheduleConfigSerializer(serializers.Serializer):
     allow_visitors = serializers.BooleanField(required=False, default=True)
     # Turno de almuerzo (para «solo almuerzo»). Un terminal antiguo no lo manda: null → por nombre.
     is_lunch = serializers.BooleanField(required=False, allow_null=True, default=None)
+    # Turno de ingreso manual (sin marcaciones). Un terminal antiguo no lo manda: turno normal.
+    manual_entry = serializers.BooleanField(required=False, allow_null=True, default=None)
     companies = serializers.ListField(
         child=serializers.CharField(max_length=200, allow_blank=True),
         required=False, default=list,

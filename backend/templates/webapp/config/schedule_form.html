@@ -45,9 +45,13 @@
       </div>
 
       <div class="row g-3 mt-1">
-        <div class="col-md-8">
+        <div class="col-md-6">
           <div class="form-check form-switch">{{ form.is_lunch }}<label class="form-check-label">{{ form.is_lunch.label }}</label></div>
           <div class="form-text">{{ form.is_lunch.help_text }} Las de «sin colación» (0) quedan NO AUTORIZADAS en todos los turnos.</div>
+        </div>
+        <div class="col-md-6">
+          <div class="form-check form-switch">{{ form.manual_entry }}<label class="form-check-label">{{ form.manual_entry.label }}</label></div>
+          <div class="form-text">{{ form.manual_entry.help_text }}</div>
         </div>
       </div>
 

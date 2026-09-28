@@ -131,6 +131,22 @@ class ShiftIdentityTests(TestCase):
         self.assertEqual(Shift.objects.get(uid='uid-a').name, 'Almuerzo')
         self.assertEqual(Shift.objects.get(uid='uid-b').name, 'Cena')
 
+    def test_manual_entry_count_is_stored(self):
+        """Un registro de ingreso manual llega como turno cerrado con su cantidad; reenviarlo no duplica."""
+        manual = self._shift('uid-once', remote_id=7, name='Once',
+                             started_at='2026-08-17T16:05:00', ended_at='2026-08-17T16:05:00',
+                             auto=False, end_reason='ingreso_manual', manual_count=25)
+        self._sync({'shifts': [manual, self._shift('uid-alm', remote_id=6)]})
+        self._sync({'shifts': [manual]})
+
+        once = Shift.objects.get(uid='uid-once')
+        self.assertEqual(once.manual_count, 25)
+        self.assertTrue(once.is_manual_entry)
+        self.assertEqual(once.end_reason, Shift.EndReason.MANUAL_ENTRY)
+        self.assertEqual(Shift.objects.filter(uid='uid-once').count(), 1)
+        # un turno normal (o de un terminal antiguo, que no manda el campo) queda sin cantidad
+        self.assertIsNone(Shift.objects.get(uid='uid-alm').manual_count)
+
     def test_shift_end_reason_and_reopening(self):
         self._sync({'shifts': [
             self._shift('uid-a', remote_id=1,
@@ -326,6 +342,32 @@ class ShiftOvertimeConfigTests(TestCase):
         lunch_flags = {s['uid']: s['is_lunch'] for s in body['config']['schedules']}
         self.assertEqual(lunch_flags, {'sc-once': True, 'sc-alm': True, 'sc-cena': False})
 
+    def test_manual_entry_survives_sync(self):
+        """La marca de ingreso manual viaja en la config; un terminal antiguo no la manda: turno normal."""
+        self._sync({'config': {
+            'updated_at': _stamp(timezone.now()),
+            'schedules': [
+                {'remote_id': 1, 'uid': 'sc-once', 'name': 'Once', 'start_min': 960,
+                 'end_min': 1080, 'enabled': True, 'manual_entry': True,
+                 'all_companies': True, 'allow_visitors': True, 'companies': []},
+                {'remote_id': 2, 'uid': 'sc-alm', 'name': 'Almuerzo', 'start_min': 720,
+                 'end_min': 840, 'enabled': True,
+                 'all_companies': True, 'allow_visitors': True, 'companies': []},
+            ],
+            'visitor_cards': [],
+        }})
+        by_uid = {s.uid: s for s in ShiftSchedule.objects.filter(station=self.station)}
+        self.assertTrue(by_uid['sc-once'].manual_entry)
+        self.assertFalse(by_uid['sc-alm'].manual_entry)
+
+        # y el servidor la devuelve cuando su copia es más nueva
+        self.station.config_updated_at = timezone.now() + timedelta(seconds=5)
+        self.station.save(update_fields=['config_updated_at'])
+        body = self._sync({'config': {'updated_at': _stamp(timezone.now()),
+                                      'schedules': [], 'visitor_cards': []}})
+        flags = {s['uid']: s['manual_entry'] for s in body['config']['schedules']}
+        self.assertEqual(flags, {'sc-once': True, 'sc-alm': False})
+
     def test_person_meal_policy_survives_sync(self):
         """La colación asignada (campo Colacion de HikCentral) se respalda por persona."""
         self._sync({'persons': [
@@ -478,6 +520,30 @@ class ConfigWebTests(TestCase):
         self.assertEqual(resp.status_code, 302)
         sched.refresh_from_db()
         self.assertFalse(sched.is_lunch)
+
+    def test_schedule_form_saves_manual_entry(self):
+        resp = self.client.post(f'/estaciones/{self.station.pk}/turnos/nuevo/', {
+            'name': 'Once', 'start': '16:00', 'end': '18:00', 'enabled': 'on',
+            'allow_visitors': 'on', 'all_companies': 'on', 'manual_entry': 'on',
+        })
+        self.assertEqual(resp.status_code, 302, resp.content[:500])
+        sched = ShiftSchedule.objects.get(station=self.station)
+        self.assertTrue(sched.manual_entry)
+        self.station.refresh_from_db()
+        self.assertIsNotNone(self.station.config_updated_at)   # el terminal la adoptará
+        resp = self.client.get(f'/estaciones/{self.station.pk}/turnos/')
+        self.assertContains(resp, 'Ingreso manual')             # insignia en la lista
+        resp = self.client.get(f'/estaciones/{self.station.pk}/turnos/{sched.pk}/')
+        self.assertRegex(resp.content.decode(), r'name="manual_entry"[^>]*checked')
+
+        # desmarcar
+        resp = self.client.post(f'/estaciones/{self.station.pk}/turnos/{sched.pk}/', {
+            'name': 'Once', 'start': '16:00', 'end': '18:00', 'enabled': 'on',
+            'allow_visitors': 'on', 'all_companies': 'on',
+        })
+        self.assertEqual(resp.status_code, 302)
+        sched.refresh_from_db()
+        self.assertFalse(sched.manual_entry)
 
     def test_person_list_shows_meal_policy(self):
         Person.objects.create(station=self.station, employee_no='10585109K', name='Luis Perez',

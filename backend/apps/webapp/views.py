@@ -1,11 +1,11 @@
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import datetime, time, timedelta
 
 from django.contrib import messages
 from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
-from django.db.models import Count, Q
+from django.db.models import Count, Q, Sum
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.utils.dateparse import parse_date
@@ -13,7 +13,7 @@ from django.utils.dateparse import parse_date
 from django.http import Http404, HttpResponse, JsonResponse
 
 from backend.apps.core.models import (
-    AccessEvent, Person, ShiftSchedule, Station, StationAPIKey, VisitorCard,
+    AccessEvent, Person, Shift, ShiftSchedule, Station, StationAPIKey, VisitorCard,
 )
 from backend.apps.realtime.broadcast import active_shifts
 from backend.apps.webapp.permissions import (
@@ -49,13 +49,19 @@ def dashboard(request):
         event_time__gte=dt_month, status=AccessEvent.Status.OK,
     )
 
-    por_estacion = (
-        servidas_qs.values('station__name')
-        .annotate(total=Count('id')).order_by('-total')
-    )
+    # Colaciones de ingreso manual (turnos sin marcación): cuentan igual que las servidas.
+    manuales_qs = Shift.objects.filter(started_at__gte=dt_month, manual_count__gt=0)
+
+    totales = defaultdict(int)
+    for row in servidas_qs.values('station__name').annotate(total=Count('id')):
+        totales[row['station__name']] += row['total']
+    for row in manuales_qs.values('station__name').annotate(total=Sum('manual_count')):
+        totales[row['station__name']] += row['total'] or 0
+    por_estacion = sorted(({'station__name': k, 'total': v} for k, v in totales.items()),
+                          key=lambda r: r['total'], reverse=True)
 
     context = {
-        'total_mes': servidas_qs.count(),
+        'total_mes': servidas_qs.count() + (manuales_qs.aggregate(t=Sum('manual_count'))['t'] or 0),
         'total_estaciones': Station.objects.count(),
         'total_personas': Person.objects.count(),
         'total_eventos': AccessEvent.objects.count(),

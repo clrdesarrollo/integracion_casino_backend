@@ -193,6 +193,7 @@ class SyncView(APIView):
                         'service_date': s.get('service_date'),
                         'end_reason': s.get('end_reason', ''),
                         'reopened_from_uid': s.get('reopened_from_uid', ''),
+                        'manual_count': s.get('manual_count'),
                     },
                     # el mismo turno respaldado antes de los uid: empezó a la misma hora
                     same_as=lambda old, s=s: old.started_at == s['started_at'],
