@@ -18,9 +18,9 @@ def build_excel(data: ReportData, titulo: str) -> bytes:
     buf = io.BytesIO()
     wb = xlsxwriter.Workbook(buf, {'in_memory': True})
 
-    f_title = wb.add_format({'bold': True, 'font_size': 16, 'font_color': '#3574F0'})
-    f_sub = wb.add_format({'font_size': 11, 'font_color': '#6C707E'})
-    f_h = wb.add_format({'bold': True, 'bg_color': '#F0F3F8', 'border': 1})
+    f_title = wb.add_format({'bold': True, 'font_size': 16, 'font_color': '#C8102E'})
+    f_sub = wb.add_format({'font_size': 11, 'font_color': '#6E6E73'})
+    f_h = wb.add_format({'bold': True, 'bg_color': '#F2F2F4', 'border': 1})
     f_cell = wb.add_format({'border': 1})
     f_num = wb.add_format({'border': 1, 'align': 'right'})
     f_section = wb.add_format({'bold': True, 'font_size': 12})

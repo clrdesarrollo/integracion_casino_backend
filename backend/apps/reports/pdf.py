@@ -12,15 +12,14 @@ from reportlab.platypus import (
 
 from backend.apps.reports.service import ReportData
 
-ACCENT = colors.HexColor('#3574F0')
-# Rojo de marca jemo, usado en el encabezado del informe.
+# Paleta de la marca jemo: rojo + neutros. Verde y ámbar solo para estados.
 JEMO = colors.HexColor('#C8102E')
-MUTED = colors.HexColor('#6C707E')
-GREEN = colors.HexColor('#57965C')
-AMBER = colors.HexColor('#E8A33D')
-RED = colors.HexColor('#DB5C5C')
-LINE = colors.HexColor('#E1E4E8')
-HEADER_BG = colors.HexColor('#F0F3F8')
+INK = colors.HexColor('#1D1D1F')
+MUTED = colors.HexColor('#6E6E73')
+GREEN = colors.HexColor('#1A7F64')
+AMBER = colors.HexColor('#9B6829')
+LINE = colors.HexColor('#E5E5EA')
+HEADER_BG = colors.HexColor('#F2F2F4')
 
 DIAS = ['lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo']
 MESES = ['', 'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio',
@@ -57,12 +56,12 @@ def build_pdf(data: ReportData, titulo: str) -> bytes:
 
     styles = getSampleStyleSheet()
     h1 = ParagraphStyle('h1', parent=styles['Title'], fontSize=18,
-                        textColor=colors.HexColor('#1F2328'), alignment=0, spaceAfter=2)
+                        textColor=INK, alignment=0, spaceAfter=2)
     sub = ParagraphStyle('sub', parent=styles['Normal'], fontSize=11, textColor=MUTED)
     meta = ParagraphStyle('meta', parent=styles['Normal'], fontSize=8,
                           textColor=MUTED, alignment=TA_RIGHT)
     section = ParagraphStyle('section', parent=styles['Heading2'], fontSize=13,
-                             textColor=colors.HexColor('#1F2328'), spaceBefore=14, spaceAfter=6)
+                             textColor=INK, spaceBefore=14, spaceAfter=6)
     small = ParagraphStyle('small', parent=styles['Normal'], fontSize=8, textColor=MUTED)
 
     story = []
@@ -78,7 +77,7 @@ def build_pdf(data: ReportData, titulo: str) -> bytes:
         left_cell.append(Paragraph('<font size=24 color="#C8102E"><b><i>jemo</i></b></font>', h1))
     left_cell.append(Paragraph(
         'Control de Colaciones — Casino<br/>'
-        f'<font size=11 color="#6C707E">{titulo}</font>', h1))
+        f'<font size=11 color="#6E6E73">{titulo}</font>', h1))
     header_tbl = Table([[
         left_cell,
         Paragraph(
@@ -106,13 +105,13 @@ def build_pdf(data: ReportData, titulo: str) -> bytes:
         ]
 
     stats = [
-        stat(data.servidas, 'Colaciones servidas', '#3574F0'),
-        stat(data.personas_unicas, 'Personas distintas', '#57965C'),
-        stat(data.duplicados, 'Intentos duplicados', '#E8A33D'),
-        stat(data.visitas, 'Visitas (tarjeta)', '#6B9BFA'),
-        stat(data.manuales, 'Ingreso manual', '#6B9BFA'),
-        stat(data.no_autorizados, 'No autorizados', '#DB5C5C'),
-        stat(data.sin_asociar, 'Fuera de turno s/asociar', '#6C707E'),
+        stat(data.servidas, 'Colaciones servidas', '#1D1D1F'),
+        stat(data.personas_unicas, 'Personas distintas', '#1A7F64'),
+        stat(data.duplicados, 'Intentos duplicados', '#9B6829'),
+        stat(data.visitas, 'Visitas (tarjeta)', '#3A3A3C'),
+        stat(data.manuales, 'Ingreso manual', '#3A3A3C'),
+        stat(data.no_autorizados, 'No autorizados', '#C8102E'),
+        stat(data.sin_asociar, 'Fuera de turno s/asociar', '#6E6E73'),
     ]
     # cada tarjeta es una mini-tabla en una columna
     cards = [[Table([[s[0]], [s[1]]]) for s in stats]]

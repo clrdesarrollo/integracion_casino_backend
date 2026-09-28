@@ -1,6 +1,8 @@
 /* ==========================================================================
    Casino · Backoffice — Sistema de diseño
-   Derivado de DESIGN.md (Stripe-inspired) en la raíz del proyecto.
+   Derivado de DESIGN.md (Stripe-inspired) en la raíz del proyecto, con la
+   paleta de la marca jemo (rojo + blanco + grises neutros) en lugar de la
+   del DESIGN.md: tipografía, espaciado y componentes siguen el documento.
 
    Se carga DESPUÉS de Bootstrap 5.3: remapea las variables --bs-* a los
    tokens del DESIGN.md y agrega los componentes propios del sistema.
@@ -21,48 +23,46 @@
   --ds-label-size: 10px;
 
   /* --- colors: marca jemo -----------------------------------------------
-     Rojo corporativo jemo. Se usa como acento de marca (chrome de la app y
-     encabezados de reportería); el índigo sigue siendo el color de producto
-     (CTAs, ítem activo, foco), por lo que ambos conviven. */
-  --ds-jemo:                 #c8102e;
+     La paleta es la de la marca: rojo jemo + blanco + grises neutros. El
+     rojo es el color de producto (navbar, CTAs, ítem activo, foco, enlaces).
+     Reemplaza al índigo del DESIGN.md: los nombres de token se conservan y
+     solo cambian los valores.                                              */
+  --ds-jemo:                 #c8102e;   /* 5.88:1 sobre blanco */
   --ds-jemo-deep:            #9e0c22;
+  --ds-jemo-press:           #7d0a1b;
 
   /* --- colors: marca y acento ------------------------------------------- */
-  --ds-primary:              #533afd;
-  --ds-primary-deep:         #4434d4;
-  --ds-primary-press:        #2e2b8c;
-  --ds-primary-soft:         #665efd;
-  --ds-primary-subdued:      #b9b9f9;
-  --ds-brand-dark-900:       #1c1e54;
-  --ds-ruby:                 #ea2261;
-  --ds-magenta:              #f96bee;
+  --ds-primary:              var(--ds-jemo);
+  --ds-primary-deep:         var(--ds-jemo-deep);
+  --ds-primary-press:        var(--ds-jemo-press);
+  --ds-primary-soft:         #d93a52;
+  --ds-primary-subdued:      #f2b9c3;   /* primary-deep encima: 4.95:1 */
+  --ds-primary-bg:           #fbe8eb;   /* fondo suave: ítem activo, focos */
+  --ds-brand-dark-900:       #1d1d1f;   /* neutro casi negro (sin navy) */
+  --ds-ruby:                 var(--ds-jemo);
   --ds-lemon:                #9b6829;
 
-  /* --- colors: superficie ----------------------------------------------- */
+  /* --- colors: superficie (grises neutros, sin tinte azul) --------------- */
   --ds-canvas:               #ffffff;
-  --ds-canvas-soft:          #f6f9fc;
-  --ds-canvas-cream:         #f5e9d4;
-  --ds-hairline:             #e3e8ee;
-  --ds-hairline-input:       #a8c3de;
+  --ds-canvas-soft:          #f5f5f7;
+  --ds-canvas-cream:         #f5f5f7;
+  --ds-hairline:             #e5e5ea;
+  --ds-hairline-input:       #c7c7cc;
 
   /* --- colors: texto ----------------------------------------------------- */
-  --ds-ink:                  #0d253d;
-  --ds-ink-secondary:        #273951;
-  --ds-ink-mute:             #64748d;
-  --ds-ink-mute-2:           #61718a;
+  --ds-ink:                  #1d1d1f;
+  --ds-ink-secondary:        #3a3a3c;   /* 11.3:1 sobre blanco */
+  --ds-ink-mute:             #6e6e73;   /* 4.7:1 sobre canvas-soft */
+  --ds-ink-mute-2:           #636366;   /* 5.5:1 sobre canvas-soft */
   --ds-on-primary:           #ffffff;
 
-  /* --- colors: semánticos (EXTENSIÓN) ------------------------------------
-     El DESIGN.md declara explícitamente que la marca no documenta paleta
-     semántica ("error / success states live in dashboard-product UI").
-     El backoffice sí necesita estados (Ok / Duplicado / Fuera de turno /
-     No autorizado), así que se derivan de los stops documentados del mesh
-     salvo el verde, que no existe en el DESIGN.md y se agrega afinado al
-     navy de la marca. Es la única desviación de "no agregar acentos".
-     Cada estado trae un par -bg / -text: el color pleno no alcanza 4.5:1
-     sobre su propio fondo suave (ruby sobre #fde5ed da 3.59), así que el
-     texto de badges y alertas usa la variante -text. Verificado con WCAG
-     2.1 AA para texto pequeño.                                            */
+  /* --- colors: semánticos (estados) ---------------------------------------
+     El backoffice necesita estados (Ok / Duplicado / Fuera de turno / No
+     autorizado). El error usa la familia roja de la marca; el verde y el
+     ámbar se conservan porque son funcionales (se leen de un vistazo en las
+     tablas) y no compiten con el rojo. Info es neutro.
+     Cada estado trae un par -bg / -text: el texto de badges y alertas usa la
+     variante -text para cumplir WCAG 2.1 AA en texto pequeño.              */
   --ds-success:              #1a7f64;
   --ds-success-bg:           #e2f2ec;
   --ds-success-border:       #b4ded1;
@@ -71,14 +71,14 @@
   --ds-warning-bg:           #f7eddd;
   --ds-warning-border:       #e5d0ad;
   --ds-warning-text:         #744d1e;   /* 6.42:1 sobre warning-bg */
-  --ds-danger:               #ea2261;   /* = ruby  */
-  --ds-danger-bg:            #fde5ed;
-  --ds-danger-border:        #f7b9cd;
-  --ds-danger-text:          #b4174a;   /* 5.57:1 sobre danger-bg */
-  --ds-info:                 #665efd;   /* = primary-soft */
-  --ds-info-bg:              #ecebfe;
-  --ds-info-border:          #b9b9f9;
-  --ds-info-text:            #4434d4;   /* = primary-deep, 6.65:1 */
+  --ds-danger:               var(--ds-jemo);
+  --ds-danger-bg:            var(--ds-primary-bg);
+  --ds-danger-border:        var(--ds-primary-subdued);
+  --ds-danger-text:          var(--ds-jemo-deep);   /* 7.06:1 sobre danger-bg */
+  --ds-info:                 #3a3a3c;   /* neutro */
+  --ds-info-bg:              #eeeef0;
+  --ds-info-border:          #d1d1d6;
+  --ds-info-text:            #3a3a3c;   /* 10.4:1 sobre info-bg */
 
   /* --- typography -------------------------------------------------------- */
   /* Sohne es propietaria. El DESIGN.md indica Inter 300 como sustituto
@@ -104,28 +104,28 @@
   --ds-space-huge: 64px;
 
   /* --- elevation --------------------------------------------------------- */
-  --ds-elev-1: rgba(0, 55, 112, .08) 0 1px 3px;
-  --ds-elev-2: rgba(0, 55, 112, .08) 0 8px 24px, rgba(0, 55, 112, .04) 0 2px 6px;
+  --ds-elev-1: rgba(0, 0, 0, .08) 0 1px 3px;
+  --ds-elev-2: rgba(0, 0, 0, .08) 0 8px 24px, rgba(0, 0, 0, .04) 0 2px 6px;
 
-  /* --- track oscuro (dashboard / monitor) -------------------------------- */
-  --ds-dark-canvas:   #0d253d;   /* = ink            */
-  --ds-dark-surface:  #1c1e54;   /* = brand-dark-900 */
-  --ds-dark-raised:   #273951;   /* = ink-secondary  */
-  --ds-dark-hairline: rgba(168, 195, 222, .18);
+  /* --- track oscuro (monitor en vivo): carbón neutro, sin navy ------------ */
+  --ds-dark-canvas:   #161618;
+  --ds-dark-surface:  #1f1f22;
+  --ds-dark-raised:   #2c2c30;
+  --ds-dark-hairline: rgba(255, 255, 255, .12);
   --ds-dark-text:     #ffffff;
-  --ds-dark-mute:     #a8c3de;   /* = hairline-input, legible sobre navy */
+  --ds-dark-mute:     #a1a1a6;   /* 6.4:1 sobre dark-surface */
 
-  /* Acentos sobre navy. Los tokens semánticos son de superficie clara y no
-     alcanzan contraste sobre el track oscuro, así que se levantan en
-     luminosidad conservando el matiz. */
+  /* Acentos sobre el track oscuro. Los tokens semánticos son de superficie
+     clara y no alcanzan contraste aquí, así que se levantan en luminosidad
+     conservando el matiz. */
   --ds-dark-success: #5fd3ac;
   --ds-dark-success-bg: rgba(26, 127, 100, .22);
   --ds-dark-warning: #e0b27a;
   --ds-dark-warning-bg: rgba(155, 104, 41, .28);
-  --ds-dark-danger:  #ff7aa2;
-  --ds-dark-danger-bg: rgba(234, 34, 97, .20);
-  --ds-dark-info:    #a5a0ff;
-  --ds-dark-info-bg: rgba(83, 58, 253, .26);
+  --ds-dark-danger:  #ff5c72;   /* rojo jemo levantado: 5.5:1 sobre dark-surface */
+  --ds-dark-danger-bg: rgba(200, 16, 46, .24);
+  --ds-dark-info:    #d1d1d6;
+  --ds-dark-info-bg: rgba(255, 255, 255, .10);
 }
 
 /* --------------------------------------------------------------------------
@@ -138,9 +138,9 @@
   --bs-body-font-weight: var(--ds-body-weight);
   --bs-body-line-height: 1.4;
   --bs-body-color: var(--ds-ink);
-  --bs-body-color-rgb: 13, 37, 61;
+  --bs-body-color-rgb: 29, 29, 31;
   --bs-body-bg: var(--ds-canvas-soft);
-  --bs-body-bg-rgb: 246, 249, 252;
+  --bs-body-bg-rgb: 245, 245, 247;
 
   --bs-emphasis-color: var(--ds-ink);
   /* ink-mute-2 en vez de ink-mute: .text-muted aparece sobre canvas-soft,
@@ -159,17 +159,19 @@
   --bs-border-radius-pill: var(--ds-radius-pill);
 
   --bs-primary: var(--ds-primary);
-  --bs-primary-rgb: 83, 58, 253;
+  --bs-primary-rgb: 200, 16, 46;
   --bs-primary-text-emphasis: var(--ds-primary-deep);
-  --bs-primary-bg-subtle: var(--ds-info-bg);
+  --bs-primary-bg-subtle: var(--ds-primary-bg);
   --bs-primary-border-subtle: var(--ds-primary-subdued);
 
   --bs-link-color: var(--ds-primary);
-  --bs-link-color-rgb: 83, 58, 253;
+  --bs-link-color-rgb: 200, 16, 46;
   --bs-link-hover-color: var(--ds-primary-deep);
   --bs-link-decoration: none;               /* link-on-light: sin subrayado */
+  /* <code> (horarios, IDs, tarjetas): tinta neutra en vez del rosa de Bootstrap */
+  --bs-code-color: var(--ds-ink-secondary);
 
-  --bs-focus-ring-color: rgba(83, 58, 253, .22);
+  --bs-focus-ring-color: rgba(200, 16, 46, .22);
   --bs-focus-ring-width: 3px;
 
   /* Estados. Alimentan .bg-*, .text-*, .alert-* y .badge de Bootstrap. */
@@ -186,27 +188,27 @@
   --bs-warning-text-emphasis: #744d1e;
 
   --bs-danger: var(--ds-danger);
-  --bs-danger-rgb: 234, 34, 97;
+  --bs-danger-rgb: 200, 16, 46;
   --bs-danger-bg-subtle: var(--ds-danger-bg);
   --bs-danger-border-subtle: var(--ds-danger-border);
-  --bs-danger-text-emphasis: #b4174a;
+  --bs-danger-text-emphasis: #9e0c22;
 
   --bs-info: var(--ds-info);
-  --bs-info-rgb: 102, 94, 253;
+  --bs-info-rgb: 58, 58, 60;
   --bs-info-bg-subtle: var(--ds-info-bg);
   --bs-info-border-subtle: var(--ds-info-border);
   --bs-info-text-emphasis: var(--ds-primary-deep);
 
   --bs-secondary: var(--ds-ink-mute);
-  --bs-secondary-rgb: 100, 116, 141;
+  --bs-secondary-rgb: 110, 110, 115;
   --bs-secondary-bg-subtle: var(--ds-canvas-soft);
   --bs-secondary-border-subtle: var(--ds-hairline);
   --bs-secondary-text-emphasis: var(--ds-ink-secondary);
 
   --bs-light: var(--ds-canvas-soft);
-  --bs-light-rgb: 246, 249, 252;
+  --bs-light-rgb: 245, 245, 247;
   --bs-dark: var(--ds-brand-dark-900);
-  --bs-dark-rgb: 28, 30, 84;
+  --bs-dark-rgb: 29, 29, 31;
 }
 
 /* --------------------------------------------------------------------------
@@ -325,9 +327,9 @@ h1, h2, h3, h4, h5, h6 { color: var(--ds-ink); }
 .btn-danger {
   --bs-btn-bg: var(--ds-danger);
   --bs-btn-border-color: var(--ds-danger);
-  --bs-btn-hover-bg: #c8174f;
-  --bs-btn-hover-border-color: #c8174f;
-  --bs-btn-active-bg: #a81243;
+  --bs-btn-hover-bg: var(--ds-jemo-deep);
+  --bs-btn-hover-border-color: var(--ds-jemo-deep);
+  --bs-btn-active-bg: var(--ds-jemo-press);
 }
 
 .btn-success {
@@ -434,7 +436,7 @@ h1, h2, h3, h4, h5, h6 { color: var(--ds-ink); }
 .stat-card .value.is-success { color: var(--ds-success); }
 .stat-card .value.is-warning { color: var(--ds-warning); }
 .stat-card .value.is-danger  { color: var(--ds-danger);  }
-.stat-card .value.is-info    { color: var(--ds-primary-soft); }
+.stat-card .value.is-info    { color: var(--ds-ink-secondary); }
 
 /* --------------------------------------------------------------------------
    7. Tablas — hairline, encabezado micro-cap, cuerpo tabular
@@ -471,7 +473,7 @@ h1, h2, h3, h4, h5, h6 { color: var(--ds-ink); }
 }
 
 /* --------------------------------------------------------------------------
-   8. Formularios — radio 6px, borde hairline-input, foco indigo
+   8. Formularios — radio 6px, borde hairline-input, foco rojo de marca
    -------------------------------------------------------------------------- */
 .form-control, .form-select {
   background-color: var(--ds-canvas);
@@ -548,6 +550,9 @@ h1, h2, h3, h4, h5, h6 { color: var(--ds-ink); }
 .badge.bg-warning.text-dark { color: var(--ds-warning-text) !important; }
 .badge.bg-light.text-dark { color: var(--ds-ink-secondary) !important; }
 .badge.bg-secondary-subtle.text-secondary { color: var(--ds-ink-secondary) !important; }
+/* Etiquetas informativas («Todas las empresas», rol): neutras. En rojo se
+   confundirían con «No autorizado», que usa la familia roja de la marca. */
+.badge.text-bg-primary { background: var(--ds-info-bg) !important; color: var(--ds-ink-secondary) !important; border: 1px solid var(--ds-hairline); }
 
 .pill-tag-soft {
   display: inline-block;
@@ -606,7 +611,8 @@ h1, h2, h3, h4, h5, h6 { color: var(--ds-ink); }
   font-size: 13px;
   font-weight: 300;
   letter-spacing: -.39px;
-  color: var(--ds-hairline-input);
+  /* blanco al 88 % sobre el rojo de la barra: 4.8:1 (AA para texto pequeño) */
+  color: rgba(255, 255, 255, .88);
 }
 
 .sidebar {
@@ -628,10 +634,10 @@ h1, h2, h3, h4, h5, h6 { color: var(--ds-ink); }
   min-height: 40px;
 }
 .sidebar .nav-link:hover { background: var(--ds-canvas-soft); color: var(--ds-ink); }
-/* El indigo relleno se reserva para CTAs: el ítem activo usa el fill
-   subdued documentado en pill-tag-soft más una barra de acento. */
+/* El rojo relleno se reserva para CTAs: el ítem activo usa el fondo suave
+   de la marca más una barra de acento. */
 .sidebar .nav-link.active {
-  background: var(--ds-info-bg);
+  background: var(--ds-primary-bg);
   color: var(--ds-primary-deep);
   font-weight: 400;
   box-shadow: inset 3px 0 0 var(--ds-primary);
@@ -649,21 +655,17 @@ h1, h2, h3, h4, h5, h6 { color: var(--ds-ink); }
 }
 
 /* --------------------------------------------------------------------------
-   12. Gradient mesh — el medio de profundidad de la marca
-   El mesh real usa formas orgánicas no renderizables con un gradiente CSS
-   plano; se aproxima con radial-gradients superpuestos siguiendo el orden
-   de stops documentado: crema -> sherbet -> lavanda -> índigo -> ruby ->
-   magenta.
+   12. Gradient mesh — fondo de portada (login)
+   Radial-gradients superpuestos en la familia del rojo jemo sobre gris
+   neutro: profundidad sin salir de la paleta de la marca.
    -------------------------------------------------------------------------- */
 .ds-mesh {
-  background-color: var(--ds-canvas);
+  background-color: var(--ds-canvas-soft);
   background-image:
-    radial-gradient(58% 78% at  8% 16%, rgba(245, 233, 212, .95) 0%, rgba(245, 233, 212, 0) 62%),
-    radial-gradient(52% 70% at 27%  6%, rgba(155, 104,  41, .30) 0%, rgba(155, 104,  41, 0) 64%),
-    radial-gradient(56% 76% at 48% 20%, rgba(185, 185, 249, .85) 0%, rgba(185, 185, 249, 0) 66%),
-    radial-gradient(50% 68% at 70%  4%, rgba( 83,  58, 253, .50) 0%, rgba( 83,  58, 253, 0) 62%),
-    radial-gradient(46% 64% at 86% 24%, rgba(234,  34,  97, .38) 0%, rgba(234,  34,  97, 0) 64%),
-    radial-gradient(40% 56% at 99%  6%, rgba(249, 107, 238, .34) 0%, rgba(249, 107, 238, 0) 60%);
+    radial-gradient(60% 80% at 10% 10%, rgba(242, 185, 195, .70) 0%, rgba(242, 185, 195, 0) 64%),
+    radial-gradient(54% 72% at 45%  0%, rgba(200,  16,  46, .28) 0%, rgba(200,  16,  46, 0) 62%),
+    radial-gradient(50% 70% at 80% 12%, rgba(158,  12,  34, .38) 0%, rgba(158,  12,  34, 0) 64%),
+    radial-gradient(44% 60% at 99%  0%, rgba(200,  16,  46, .45) 0%, rgba(200,  16,  46, 0) 60%);
   background-repeat: no-repeat;
   background-size: 100% 38vh;
   background-position: top center;
@@ -671,7 +673,7 @@ h1, h2, h3, h4, h5, h6 { color: var(--ds-ink); }
 
 /* --------------------------------------------------------------------------
    13. Track oscuro — monitor en vivo
-   El DESIGN.md define las superficies de producto en navy profundo; el
+   El DESIGN.md define superficies de producto oscuras (aquí carbón neutro); el
    monitor es exactamente esa superficie.
    -------------------------------------------------------------------------- */
 .mon-wrap {
@@ -681,7 +683,7 @@ h1, h2, h3, h4, h5, h6 { color: var(--ds-ink); }
   overflow: hidden;
   box-shadow: var(--ds-elev-2);
 }
-/* Los encabezados heredan ink (navy) del sistema; sobre el track oscuro hay
+/* Los encabezados heredan ink (casi negro) del sistema; sobre el track oscuro hay
    que devolverlos al color claro o desaparecen contra el fondo. */
 .mon-wrap h1, .mon-wrap h2, .mon-wrap h3,
 .mon-wrap h4, .mon-wrap h5, .mon-wrap h6 { color: var(--ds-dark-text); }
@@ -707,7 +709,7 @@ h1, h2, h3, h4, h5, h6 { color: var(--ds-ink); }
   --bs-dropdown-border-radius: var(--ds-radius-md);
   --bs-dropdown-link-color: var(--ds-ink-secondary);
   --bs-dropdown-link-hover-bg: var(--ds-canvas-soft);
-  --bs-dropdown-link-active-bg: var(--ds-info-bg);
+  --bs-dropdown-link-active-bg: var(--ds-primary-bg);
   --bs-dropdown-link-active-color: var(--ds-primary-deep);
   --bs-dropdown-font-size: 15px;
   box-shadow: var(--ds-elev-2);
