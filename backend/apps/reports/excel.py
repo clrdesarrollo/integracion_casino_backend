@@ -48,6 +48,7 @@ def build_excel(data: ReportData, titulo: str) -> bytes:
         ('Personas distintas', data.personas_unicas),
         ('Intentos duplicados', data.duplicados),
         ('Visitas (tarjeta)', data.visitas),
+        ('Ingreso manual', data.manuales),
         ('No autorizados', data.no_autorizados),
         ('Fuera de turno sin asociar', data.sin_asociar),
     ]
@@ -77,22 +78,23 @@ def build_excel(data: ReportData, titulo: str) -> bytes:
     turno_rows = []
     for r in data.por_turno:
         s = r.shift
-        turno_rows.append((s.name, _local_str(s.started_at),
-                           _local_str(s.ended_at) or 'en curso',
-                           r.en_turno, r.asociadas, r.total))
+        fin = 'ingreso manual' if s.is_manual_entry else (_local_str(s.ended_at) or 'en curso')
+        turno_rows.append((s.name, _local_str(s.started_at), fin,
+                           r.en_turno, r.asociadas, r.manuales, r.total))
     sheet_table('Por turno',
-                ['Turno', 'Inicio', 'Término', 'En turno', 'Asociadas', 'Total'],
+                ['Turno', 'Inicio', 'Término', 'En turno', 'Asociadas', 'Manual', 'Total'],
                 turno_rows)
 
-    # ---- Por empresa ----
+    # ---- Por empresa (con composición por turno) ----
     sheet_table('Por empresa',
-                ['Empresa', 'Colaciones'],
-                [(emp, total) for emp, total in data.por_empresa])
+                ['Empresa'] + data.meal_types + ['Total'],
+                [(emp, *comp, total) for emp, total, comp in data.por_empresa])
 
-    # ---- Por persona ----
+    # ---- Por persona (con composición por turno) ----
     sheet_table('Por persona',
-                ['Nombre', 'Empresa', 'Colaciones'],
-                list(data.por_persona))
+                ['Nombre', 'Empresa'] + data.meal_types + ['Total'],
+                [(nombre, empresa, *comp, total)
+                 for nombre, empresa, total, comp in data.por_persona])
 
     wb.close()
     return buf.getvalue()

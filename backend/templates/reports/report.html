@@ -61,6 +61,8 @@
   <div class="col"><div class="card stat-card shadow-sm"><div class="card-body">
     <div class="value is-info">{{ data.visitas }}</div><div class="label">Visitas (tarjeta)</div></div></div></div>
   <div class="col"><div class="card stat-card shadow-sm"><div class="card-body">
+    <div class="value is-info">{{ data.manuales }}</div><div class="label">Ingreso manual</div></div></div></div>
+  <div class="col"><div class="card stat-card shadow-sm"><div class="card-body">
     <div class="value is-danger">{{ data.no_autorizados }}</div><div class="label">No autorizados</div></div></div></div>
   <div class="col"><div class="card stat-card shadow-sm"><div class="card-body">
     <div class="value text-muted">{{ data.sin_asociar }}</div><div class="label">Fuera de turno s/asociar</div></div></div></div>
@@ -83,15 +85,25 @@
   </div>
 
   <!-- Por empresa -->
-  <div class="col-lg-6">
+  <div class="col-12">
     <div class="card shadow-sm">
-      <div class="card-header">Colaciones por empresa</div>
+      <div class="card-header">Colaciones por empresa
+        {% if data.meal_types %}<span class="ds-caption fw-normal">— desglose por turno (composición del total)</span>{% endif %}
+      </div>
       <div class="table-responsive"><table class="table table-sm mb-0">
-        <thead><tr><th>Empresa</th><th class="text-end">Colaciones</th></tr></thead>
+        <thead><tr>
+          <th>Empresa</th>
+          {% for t in data.meal_types %}<th class="text-end">{{ t }}</th>{% endfor %}
+          <th class="text-end">Total</th>
+        </tr></thead>
         <tbody>
-          {% for empresa, total in data.por_empresa %}
-          <tr><td>{{ empresa }}</td><td class="text-end">{{ total }}</td></tr>
-          {% empty %}<tr><td colspan="2" class="text-muted text-center py-3">Sin datos.</td></tr>{% endfor %}
+          {% for empresa, total, comp in data.por_empresa %}
+          <tr>
+            <td>{{ empresa }}</td>
+            {% for c in comp %}<td class="text-end">{% if c %}{{ c }}{% else %}<span class="text-muted">·</span>{% endif %}</td>{% endfor %}
+            <td class="text-end fw-semibold">{{ total }}</td>
+          </tr>
+          {% empty %}<tr><td colspan="{{ data.meal_types|length|add:2 }}" class="text-muted text-center py-3">Sin datos.</td></tr>{% endfor %}
         </tbody>
       </table></div>
     </div>
@@ -101,21 +113,22 @@
   <div class="col-12">
     <div class="card shadow-sm">
       <div class="card-header">Colaciones por turno
-        <span class="ds-caption fw-normal">— «Asociadas»: marcaciones fuera de turno atribuidas (hasta {{ data.grace_minutes }} min antes del inicio).</span>
+        <span class="ds-caption fw-normal">— «En turno»: colaciones válidas dentro del turno. «Asociadas»: marcaciones fuera de turno que se atribuyen a este (hasta {{ data.grace_minutes }} min antes de su inicio, o tras el término del anterior). «Manual»: cantidad registrada por la cocinera en un turno sin marcación.</span>
       </div>
       <div class="table-responsive"><table class="table table-sm mb-0">
-        <thead><tr><th>Turno</th><th>Inicio</th><th>Término</th><th class="text-end">En turno</th><th class="text-end">Asociadas</th><th class="text-end">Total</th></tr></thead>
+        <thead><tr><th>Turno</th><th>Inicio</th><th>Término</th><th class="text-end">En turno</th><th class="text-end">Asociadas</th><th class="text-end">Manual</th><th class="text-end">Total</th></tr></thead>
         <tbody>
           {% for r in data.por_turno %}
           <tr>
             <td>{{ r.shift.name }}</td>
             <td>{{ r.shift.started_at|date:"d-m H:i" }}</td>
-            <td>{% if r.shift.ended_at %}{{ r.shift.ended_at|date:"d-m H:i" }}{% else %}<span class="text-muted">en curso</span>{% endif %}</td>
+            <td>{% if r.shift.is_manual_entry %}<span class="badge bg-info">ingreso manual</span>{% elif r.shift.ended_at %}{{ r.shift.ended_at|date:"d-m H:i" }}{% else %}<span class="text-muted">en curso</span>{% endif %}</td>
             <td class="text-end">{{ r.en_turno }}</td>
             <td class="text-end">{{ r.asociadas }}</td>
+            <td class="text-end">{{ r.manuales }}</td>
             <td class="text-end fw-semibold">{{ r.total }}</td>
           </tr>
-          {% empty %}<tr><td colspan="6" class="text-muted text-center py-3">Sin turnos en el período.</td></tr>{% endfor %}
+          {% empty %}<tr><td colspan="7" class="text-muted text-center py-3">Sin turnos en el período.</td></tr>{% endfor %}
         </tbody>
       </table></div>
     </div>
@@ -124,13 +137,24 @@
   <!-- Por persona -->
   <div class="col-12">
     <div class="card shadow-sm">
-      <div class="card-header">Detalle por persona</div>
+      <div class="card-header">Detalle por persona
+        {% if data.meal_types %}<span class="ds-caption fw-normal">— desglose por turno (composición del total)</span>{% endif %}
+        {% if data.manuales %}<span class="ds-caption fw-normal">· no incluye las {{ data.manuales }} colaciones de ingreso manual (no tienen marcación personal)</span>{% endif %}
+      </div>
       <div class="table-responsive"><table class="table table-sm mb-0">
-        <thead><tr><th>Nombre</th><th>Empresa</th><th class="text-end">Colaciones</th></tr></thead>
+        <thead><tr>
+          <th>Nombre</th><th>Empresa</th>
+          {% for t in data.meal_types %}<th class="text-end">{{ t }}</th>{% endfor %}
+          <th class="text-end">Total</th>
+        </tr></thead>
         <tbody>
-          {% for nombre, empresa, total in data.por_persona %}
-          <tr><td>{{ nombre }}</td><td>{{ empresa|default:"—" }}</td><td class="text-end">{{ total }}</td></tr>
-          {% empty %}<tr><td colspan="3" class="text-muted text-center py-3">Sin datos.</td></tr>{% endfor %}
+          {% for nombre, empresa, total, comp in data.por_persona %}
+          <tr>
+            <td>{{ nombre }}</td><td>{{ empresa|default:"—" }}</td>
+            {% for c in comp %}<td class="text-end">{% if c %}{{ c }}{% else %}<span class="text-muted">·</span>{% endif %}</td>{% endfor %}
+            <td class="text-end fw-semibold">{{ total }}</td>
+          </tr>
+          {% empty %}<tr><td colspan="{{ data.meal_types|length|add:3 }}" class="text-muted text-center py-3">Sin datos.</td></tr>{% endfor %}
         </tbody>
       </table></div>
     </div>
