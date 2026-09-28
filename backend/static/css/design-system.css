@@ -20,6 +20,13 @@
   --ds-body-weight: 300;
   --ds-label-size: 10px;
 
+  /* --- colors: marca jemo -----------------------------------------------
+     Rojo corporativo jemo. Se usa como acento de marca (chrome de la app y
+     encabezados de reportería); el índigo sigue siendo el color de producto
+     (CTAs, ítem activo, foco), por lo que ambos conviven. */
+  --ds-jemo:                 #c8102e;
+  --ds-jemo-deep:            #9e0c22;
+
   /* --- colors: marca y acento ------------------------------------------- */
   --ds-primary:              #533afd;
   --ds-primary-deep:         #4434d4;
@@ -568,7 +575,7 @@ h1, h2, h3, h4, h5, h6 { color: var(--ds-ink); }
    11. Chrome de la app — navbar y sidebar (track oscuro del dashboard)
    -------------------------------------------------------------------------- */
 .app-navbar {
-  background: var(--ds-brand-dark-900);
+  background: var(--ds-jemo);
   padding: var(--ds-space-lg) var(--ds-space-xl);
 }
 .app-navbar .navbar-brand {
@@ -578,9 +585,23 @@ h1, h2, h3, h4, h5, h6 { color: var(--ds-ink); }
   letter-spacing: -.2px;
   display: inline-flex;
   align-items: center;
-  gap: var(--ds-space-sm);
+  gap: var(--ds-space-md);
 }
 .app-navbar .navbar-brand:hover { color: var(--ds-on-primary); }
+/* Logo jemo en la navbar: alto fijo, el ancho se ajusta solo. El wordmark
+   oficial es rojo; sobre la barra roja se pinta en blanco con un filtro
+   (brightness 0 -> negro, invert -> blanco), sin necesitar un asset aparte. */
+.app-navbar .brand-logo {
+  height: 20px;
+  width: auto;
+  display: block;
+  filter: brightness(0) invert(1);
+}
+/* Separador entre el wordmark y el nombre del backoffice. */
+.app-navbar .brand-sep {
+  color: rgba(255, 255, 255, .55);
+  font-weight: 300;
+}
 .app-navbar .app-user {
   font-size: 13px;
   font-weight: 300;

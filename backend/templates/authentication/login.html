@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% load static %}
 {% block title %}Ingreso · Casino Backoffice{% endblock %}
 
 {# El DESIGN.md exige el gradient mesh en toda portada: el login es la única
@@ -10,8 +11,8 @@
   <div class="card shadow" style="width: 380px;">
     <div class="card-body">
       <div class="text-center mb-4">
-        <i class="bi bi-cup-hot" style="font-size: 2.5rem; color: var(--ds-primary);"></i>
-        <h4 class="mt-2 mb-1">Casino · Backoffice</h4>
+        <img src="{% static 'img/jemo-logo.webp' %}" alt="jemo" style="height: 44px; width: auto;">
+        <h4 class="mt-3 mb-1">Casino · Backoffice</h4>
         <p class="ds-caption mb-0">Control de colaciones</p>
       </div>
 
