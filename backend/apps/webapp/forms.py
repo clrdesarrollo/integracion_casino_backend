@@ -1,7 +1,8 @@
 from django import forms
 from django.contrib.auth import get_user_model
 
-from backend.apps.core.models import Station
+from backend.apps.core.access import CAPABILITIES
+from backend.apps.core.models import Role, Station
 
 User = get_user_model()
 
@@ -36,6 +37,20 @@ class UserForm(forms.ModelForm):
             self.fields['password'].required = True
             self.fields['password'].help_text = 'Requerida para el nuevo usuario.'
 
+    def clean(self):
+        cleaned = super().clean()
+        role, active = cleaned.get('role'), cleaned.get('is_active')
+        # nunca dejar el sistema sin un administrador activo que lo gestione
+        if self.instance.pk and self.instance.role.is_admin and role is not None and (
+                not role.is_admin or not active):
+            otros = (User.objects.filter(role__is_admin=True, is_active=True)
+                     .exclude(pk=self.instance.pk).exists())
+            if not otros:
+                raise forms.ValidationError(
+                    'Es el único administrador activo: no se le puede quitar el rol '
+                    'ni desactivarlo.')
+        return cleaned
+
     def save(self, commit=True):
         user = super().save(commit=False)
         password = self.cleaned_data.get('password')
@@ -45,6 +60,44 @@ class UserForm(forms.ModelForm):
         if commit:
             user.save()
         return user
+
+
+class RoleForm(forms.ModelForm):
+    """
+    Alta/edición de roles. Los permisos se eligen del catálogo de capacidades; el rol
+    administrador no se toca (siempre lo tiene todo: quitarle algo podría dejar al sistema
+    sin nadie que lo administre).
+    """
+
+    permissions = forms.MultipleChoiceField(
+        label='Permisos', required=False,
+        choices=[(c.code, c.label) for c in CAPABILITIES],
+        widget=forms.CheckboxSelectMultiple,
+    )
+
+    class Meta:
+        model = Role
+        fields = ['name', 'description', 'permissions']
+        widgets = {
+            'name': forms.TextInput(attrs=_INPUT),
+            'description': forms.TextInput(attrs=_INPUT),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.locked = bool(self.instance.pk and self.instance.is_admin)
+        self.fields['permissions'].initial = list(self.instance.permissions or [])
+
+    def clean_permissions(self):
+        if self.locked:
+            return list(self.instance.permissions)
+        return self.cleaned_data['permissions']
+
+    def clean_name(self):
+        name = ' '.join(self.cleaned_data['name'].split())
+        if Role.objects.filter(name__iexact=name).exclude(pk=self.instance.pk).exists():
+            raise forms.ValidationError('Ya existe un rol con ese nombre.')
+        return name
 
 
 class StationForm(forms.ModelForm):
@@ -263,3 +316,106 @@ class VisitorCardForm(forms.Form):
         if not no:
             raise forms.ValidationError('Ingresa el número de la tarjeta.')
         return no
+
+
+# =====================================================================
+#  Registro de visitas: entrega de una tarjeta física a una persona
+# =====================================================================
+class VisitForm(forms.Form):
+    """
+    Entrega de una tarjeta de visita. El funcionario visitado se escribe por nombre (con
+    autocompletado desde la ficha de personas de la estación) y se liga a su ficha si
+    coincide; si no coincide, queda solo el nombre escrito: la visita se registra igual.
+    """
+
+    visitor_name = forms.CharField(
+        label='Nombre de la visita', max_length=200,
+        widget=forms.TextInput(attrs={**_INPUT, 'placeholder': 'Ej: Juan Pérez', 'autocomplete': 'off'}))
+    visitor_document = forms.CharField(
+        label='RUT / documento', max_length=40, required=False,
+        widget=forms.TextInput(attrs={**_INPUT, 'placeholder': 'Opcional'}))
+    visitor_company = forms.CharField(
+        label='Empresa de procedencia', max_length=200, required=False,
+        widget=forms.TextInput(attrs={**_INPUT, 'placeholder': 'Opcional: de dónde viene'}))
+    host_company = forms.CharField(
+        label='Empresa que visita', max_length=200, required=False,
+        widget=forms.TextInput(attrs={**_INPUT, 'list': 'empresas-conocidas', 'autocomplete': 'off',
+                                      'placeholder': 'Ej: PTJ'}))
+    host_name = forms.CharField(
+        label='Funcionario a quien viene a ver', max_length=200, required=False,
+        widget=forms.TextInput(attrs={**_INPUT, 'list': 'funcionarios-sugeridos', 'autocomplete': 'off',
+                                      'placeholder': 'Escribe el nombre para buscarlo'}))
+    card_no = forms.ChoiceField(label='Tarjeta que se entrega', widget=forms.Select(attrs=_SELECT))
+    notes = forms.CharField(
+        label='Observación', max_length=300, required=False,
+        widget=forms.TextInput(attrs={**_INPUT, 'placeholder': 'Opcional'}))
+
+    def __init__(self, *args, station, **kwargs):
+        super().__init__(*args, **kwargs)
+        from backend.apps.core.models import Visit
+        self.station = station
+        # tarjetas en uso: se ofrecen igual (la entrega anterior se cierra sola), pero avisando
+        in_use = {v.card_no: v for v in Visit.objects.open().filter(station=station)}
+        choices = [('', '— Elige la tarjeta —')]
+        for c in station.visitor_cards.filter(enabled=True):
+            text = f'{c.display_name} · {c.card_no}'
+            if c.card_no in in_use:
+                text += f'  (en uso: {in_use[c.card_no].visitor_name})'
+            choices.append((c.card_no, text))
+        self.fields['card_no'].choices = choices
+        self.in_use = in_use
+
+    def clean_visitor_name(self):
+        name = ' '.join(self.cleaned_data['visitor_name'].split())
+        if not name:
+            raise forms.ValidationError('Ingresa el nombre de la visita.')
+        return name
+
+    def clean(self):
+        data = super().clean()
+        if not (data.get('host_company') or '').strip() and not (data.get('host_name') or '').strip():
+            raise forms.ValidationError('Indica a quién viene a ver: la empresa, el funcionario o ambos.')
+        return data
+
+    def resolve_host(self):
+        """Ficha de la persona visitada, si el nombre escrito coincide con una sola."""
+        from backend.apps.core.models import Person
+        name = ' '.join((self.cleaned_data.get('host_name') or '').split())
+        if not name:
+            return None
+        qs = Person.objects.filter(station=self.station).exclude(user_type='visitor')
+        company = (self.cleaned_data.get('host_company') or '').strip()
+        if company:
+            qs = qs.filter(company__iexact=company)
+        exact = list(qs.filter(name__iexact=name)[:2])
+        if len(exact) == 1:
+            return exact[0]
+        partial = list(qs.filter(name__icontains=name)[:2])
+        return partial[0] if len(partial) == 1 else None
+
+    def save(self, user):
+        from django.utils import timezone
+        from backend.apps.core.models import Visit
+        d = self.cleaned_data
+        card = self.station.visitor_cards.filter(card_no=d['card_no']).first()
+        host = self.resolve_host()
+        now = timezone.now()
+        # La tarjeta pasa a la nueva visita: si nadie registró la devolución anterior, se
+        # cierra aquí para que las colaciones desde ahora se atribuyan a quien la tiene.
+        for previous in Visit.objects.open().filter(station=self.station, card_no=d['card_no']):
+            previous.close(user=user, when=now)
+        return Visit.objects.create(
+            station=self.station,
+            card_no=d['card_no'],
+            card_label=card.label if card else '',
+            visitor_name=d['visitor_name'],
+            visitor_document=(d.get('visitor_document') or '').strip(),
+            visitor_company=(d.get('visitor_company') or '').strip(),
+            host_company=(d.get('host_company') or '').strip() or (host.company if host else ''),
+            host_person=host,
+            host_name=' '.join((d.get('host_name') or '').split()) or (host.name if host else ''),
+            delivered_by=user if user.pk else None,
+            delivered_by_name=user.full_name,
+            delivered_at=now,
+            notes=(d.get('notes') or '').strip(),
+        )

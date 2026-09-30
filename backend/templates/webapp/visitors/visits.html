@@ -1,0 +1,228 @@
+{% extends 'base.html' %}
+{% block title %}Registro de visitas · Casino Backoffice{% endblock %}
+{% block nav_visitors %}active{% endblock %}
+
+{% block content %}
+{% with tab='visits' %}{% include 'webapp/visitors/_tabs.html' %}{% endwith %}
+<p class="ds-caption mb-3">
+  Cada tarjeta física de visita se entrega a una persona concreta. Aquí queda a quién se le entregó,
+  quién la entregó (el usuario que registra) y a quién venía a ver. Las colaciones que retire con esa
+  tarjeta se le atribuyen hasta que se registre la devolución.
+</p>
+
+{% if station %}
+<div class="row g-3">
+  <div class="col-lg-4">
+    <div class="card shadow-sm">
+      <div class="card-header bg-white fw-semibold"><i class="bi bi-plus-lg"></i> Registrar visita</div>
+      <div class="card-body">
+        <form method="post" id="visit-form" autocomplete="off">
+          {% csrf_token %}
+          {% if stations|length > 1 %}
+          <div class="mb-3">
+            <label class="form-label">Estación</label>
+            <select name="station" class="form-select" onchange="location.href='{% url 'webapp:visit_list' %}?estacion='+this.value">
+              {% for s in stations %}<option value="{{ s.pk }}" {% if s.pk == station.pk %}selected{% endif %}>{{ s.name }}</option>{% endfor %}
+            </select>
+          </div>
+          {% else %}
+          <input type="hidden" name="station" value="{{ station.pk }}">
+          {% endif %}
+
+          {% if form.non_field_errors %}<div class="alert alert-danger py-2 small">{{ form.non_field_errors|join:" " }}</div>{% endif %}
+
+          <div class="mb-3">
+            <label class="form-label">{{ form.visitor_name.label }}</label>{{ form.visitor_name }}
+            {% for e in form.visitor_name.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+          </div>
+          <div class="row g-2 mb-3">
+            <div class="col-5"><label class="form-label">{{ form.visitor_document.label }}</label>{{ form.visitor_document }}</div>
+            <div class="col-7"><label class="form-label">{{ form.visitor_company.label }}</label>{{ form.visitor_company }}</div>
+          </div>
+
+          <div class="ds-micro-cap text-muted mb-1">Viene a ver a</div>
+          <div class="mb-3">
+            <label class="form-label">{{ form.host_company.label }}</label>{{ form.host_company }}
+            <datalist id="empresas-conocidas">
+              {% for c in companies %}{% if c %}<option value="{{ c }}">{% endif %}{% endfor %}
+            </datalist>
+            <div class="form-text">Empresas de la ficha de personas de la estación; puedes escribir otra.</div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">{{ form.host_name.label }}</label>{{ form.host_name }}
+            <datalist id="funcionarios-sugeridos"></datalist>
+            <div class="form-text" id="host-hint">Se busca en las personas sincronizadas desde HikCentral.</div>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">{{ form.card_no.label }}</label>{{ form.card_no }}
+            {% for e in form.card_no.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+            <div class="form-text">
+              {{ cards_in_use }} de {{ cards_total }} tarjetas en uso.
+              {% if not cards_total %}<span class="text-danger">No hay tarjetas habilitadas en el inventario.</span>{% endif %}
+            </div>
+          </div>
+          <div class="mb-3"><label class="form-label">{{ form.notes.label }}</label>{{ form.notes }}</div>
+
+          <button type="submit" class="btn btn-primary" {% if not cards_total %}disabled{% endif %}>
+            <i class="bi bi-credit-card-2-front"></i> Entregar tarjeta
+          </button>
+          <div class="form-text mt-2">Quedará registrada como entregada por <strong>{{ user.full_name }}</strong>.</div>
+        </form>
+      </div>
+    </div>
+
+    <div class="card shadow-sm mt-3 border-primary-subtle">
+      <div class="card-body ds-caption">
+        <p class="mb-1"><strong>Cómo funciona:</strong> la tarjeta debe estar en el inventario de
+        <em>Tarjetas</em> y además dada de alta en HikCentral con su nivel de acceso, porque quien la lee
+        es el control de acceso. Este registro no habilita la tarjeta: dice <strong>a quién se le entregó</strong>.</p>
+        <p class="mb-0">Si se vuelve a entregar una tarjeta que sigue «en uso», la visita anterior se cierra sola
+        en ese momento.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-8">
+    <div class="card shadow-sm">
+      <div class="card-header bg-white fw-semibold">
+        Tarjetas en uso <span class="text-muted fw-normal small">({{ open_visits|length }})</span>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+          <thead><tr>
+            <th>Tarjeta</th><th>Visita</th><th>Viene a ver a</th><th>Entregada</th>
+            <th class="text-end">Colaciones</th><th class="text-end">Acciones</th>
+          </tr></thead>
+          <tbody>
+            {% for v in open_visits %}
+            <tr>
+              <td><div>{{ v.card_display }}</div><code class="ds-micro text-muted">{{ v.card_no }}</code>
+                {% if stations|length > 1 %}<div class="ds-micro text-muted">{{ v.station.name }}</div>{% endif %}</td>
+              <td><div>{{ v.visitor_name }}</div>
+                {% if v.visitor_document or v.visitor_company %}<div class="ds-micro text-muted">{{ v.visitor_document }}{% if v.visitor_document and v.visitor_company %} · {% endif %}{{ v.visitor_company }}</div>{% endif %}</td>
+              <td>{{ v.host_display|default:"—" }}</td>
+              <td class="ds-caption">{{ v.delivered_at|date:"d-m-Y H:i" }}<div class="ds-micro text-muted">por {{ v.delivered_by_name|default:"—" }}</div></td>
+              <td class="text-end fw-semibold">{{ v.meals }}</td>
+              <td class="text-end text-nowrap">
+                <form method="post" action="{% url 'webapp:visit_return' v.pk %}" class="d-inline">{% csrf_token %}
+                  <button class="btn btn-sm btn-outline-primary" type="submit" title="La visita devolvió la tarjeta"><i class="bi bi-box-arrow-in-left"></i> Devolver</button>
+                </form>
+              </td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="6" class="text-muted text-center py-4">Ninguna tarjeta entregada en este momento.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card shadow-sm mt-3">
+      <div class="card-header bg-white fw-semibold d-flex flex-wrap justify-content-between align-items-center gap-2">
+        <span>Historial <span class="text-muted fw-normal small">({{ history|length }})</span></span>
+        <form method="get" class="d-flex flex-wrap gap-2 align-items-end">
+          {% if stations|length > 1 %}<input type="hidden" name="estacion" value="{{ station.pk }}">{% endif %}
+          <input type="date" name="desde" value="{{ desde|date:'Y-m-d' }}" class="form-control form-control-sm" style="width:auto">
+          <input type="date" name="hasta" value="{{ hasta|date:'Y-m-d' }}" class="form-control form-control-sm" style="width:auto">
+          <input type="search" name="q" value="{{ q }}" placeholder="Visita, funcionario, empresa, tarjeta" class="form-control form-control-sm" style="width:16rem">
+          <button class="btn btn-primary btn-sm" type="submit"><i class="bi bi-funnel"></i> Filtrar</button>
+        </form>
+      </div>
+      {% if truncado %}<div class="alert alert-warning py-2 ds-caption mb-0 rounded-0">Se muestran las 500 visitas más recientes del rango. Acota las fechas para verlas todas.</div>{% endif %}
+      <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+          <thead><tr>
+            <th>Entregada</th><th>Visita</th><th>Viene a ver a</th><th>Tarjeta</th><th>Entregó</th><th>Devuelta</th>
+            <th class="text-end">Colaciones</th>{% if user.caps.visit_cards %}<th></th>{% endif %}
+          </tr></thead>
+          <tbody>
+            {% for v in history %}
+            <tr>
+              <td class="ds-caption text-nowrap">{{ v.delivered_at|date:"d-m-Y H:i" }}</td>
+              <td><div>{{ v.visitor_name }}</div>
+                {% if v.visitor_document or v.visitor_company %}<div class="ds-micro text-muted">{{ v.visitor_document }}{% if v.visitor_document and v.visitor_company %} · {% endif %}{{ v.visitor_company }}</div>{% endif %}
+                {% if v.notes %}<div class="ds-micro text-muted"><i class="bi bi-chat-left-text"></i> {{ v.notes }}</div>{% endif %}</td>
+              <td>{{ v.host_display|default:"—" }}</td>
+              <td><div class="ds-caption">{{ v.card_display }}</div><code class="ds-micro text-muted">{{ v.card_no }}</code></td>
+              <td class="ds-caption">{{ v.delivered_by_name|default:"—" }}</td>
+              <td class="ds-caption text-nowrap">
+                {% if v.returned_at %}{{ v.returned_at|date:"d-m-Y H:i" }}<div class="ds-micro text-muted">{{ v.returned_by_name }}</div>
+                {% else %}<span class="badge text-bg-warning">en uso</span>{% endif %}
+              </td>
+              <td class="text-end fw-semibold">{{ v.meals }}</td>
+              {% if user.caps.visit_cards %}
+              <td class="text-end">
+                <form method="post" action="{% url 'webapp:visit_delete' v.pk %}" class="d-inline"
+                      onsubmit="return confirm('¿Eliminar el registro de la visita de {{ v.visitor_name|escapejs }}?');">{% csrf_token %}
+                  <button class="btn btn-sm btn-outline-danger" type="submit" title="Eliminar registro equivocado"><i class="bi bi-trash"></i></button>
+                </form>
+              </td>
+              {% endif %}
+            </tr>
+            {% empty %}
+            <tr><td colspan="{% if user.caps.visit_cards %}8{% else %}7{% endif %}" class="text-muted text-center py-4">Sin visitas registradas en el rango elegido.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if station %}
+<script>
+(function () {
+  // Autocompletado del funcionario visitado: consulta las personas de la estación
+  // (filtradas por la empresa escrita) y las ofrece en el datalist del campo.
+  var host = document.getElementById('id_host_name');
+  var company = document.getElementById('id_host_company');
+  var list = document.getElementById('funcionarios-sugeridos');
+  var hint = document.getElementById('host-hint');
+  var url = "{% url 'webapp:visit_person_suggest' %}";
+  var station = "{{ station.pk }}";
+  var timer = null, lastKey = '';
+
+  function fill(rows) {
+    list.innerHTML = '';
+    rows.forEach(function (r) {
+      var o = document.createElement('option');
+      o.value = r.name;
+      o.label = r.company ? r.company : '';
+      list.appendChild(o);
+    });
+    if (hint) {
+      hint.textContent = rows.length
+        ? rows.length + (rows.length === 1 ? ' persona encontrada.' : ' personas encontradas.')
+        : 'Sin coincidencias en la ficha de personas: puedes dejar el nombre escrito igual.';
+    }
+  }
+
+  function lookup() {
+    var q = host.value.trim();
+    var key = company.value.trim() + '|' + q;
+    if (q.length < 2 || key === lastKey) return;
+    lastKey = key;
+    var params = new URLSearchParams({estacion: station, empresa: company.value.trim(), q: q});
+    fetch(url + '?' + params.toString(), {credentials: 'same-origin'})
+      .then(function (r) { return r.ok ? r.json() : {results: []}; })
+      .then(function (data) {
+        fill(data.results || []);
+        // si eligió a alguien y la empresa está vacía, se completa con la de su ficha
+        var match = (data.results || []).filter(function (r) { return r.name === host.value.trim(); });
+        if (match.length === 1 && !company.value.trim() && match[0].company) company.value = match[0].company;
+      })
+      .catch(function () {});
+  }
+
+  function schedule() { clearTimeout(timer); timer = setTimeout(lookup, 180); }
+  host.addEventListener('input', schedule);
+  host.addEventListener('change', function () { lastKey = ''; lookup(); });
+  company.addEventListener('change', function () { lastKey = ''; if (host.value.trim().length >= 2) lookup(); });
+})();
+</script>
+{% endif %}
+{% endblock %}

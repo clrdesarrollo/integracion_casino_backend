@@ -1,20 +1,19 @@
 """
 Construcción del informe de colaciones.
 
-Replica la lógica del informe PDF de la solución C# (ReportService.cs):
-las colaciones contabilizadas = marcaciones "Ok" en turno + marcaciones
-"SinTurno" atribuidas a un turno mediante una ventana de gracia
+Las colaciones contabilizadas = marcaciones "Ok" en turno
 + colaciones de ingreso manual (turnos sin marcación, p. ej. la once que se deja
 preparada: la cocinera registra la cantidad en el terminal).
+
+Las marcaciones "SinTurno" no suman: el kiosco las rechaza y no se sirve colación.
 """
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime
 
-from django.conf import settings
 from django.utils import timezone
 
-from backend.apps.core.models import AccessEvent, Shift, Station
+from backend.apps.core.models import AccessEvent, Shift, Station, Visit, VisitorCard
 
 
 #: Empresa con la que figuran en el informe las colaciones de ingreso manual (sin persona).
@@ -25,12 +24,61 @@ MANUAL_COMPANY = '(ingreso manual)'
 class ShiftRow:
     shift: Shift
     en_turno: int = 0
-    asociadas: int = 0
     manuales: int = 0            # registro de ingreso manual (sin marcaciones)
 
     @property
     def total(self):
-        return self.en_turno + self.asociadas + self.manuales
+        return self.en_turno + self.manuales
+
+
+@dataclass
+class VisitRow:
+    """
+    Una visita registrada (a quién se entregó la tarjeta) con las colaciones que retiró en
+    el período; o una tarjeta usada sin registro de visita, para que se note.
+    """
+    visit: Visit | None
+    card_no: str
+    card_label: str = ''
+    station: Station | None = None
+    colaciones: int = 0
+    first_at: datetime | None = None   # entrega (o primera colación si no hay registro)
+
+    @property
+    def registrada(self):
+        return self.visit is not None
+
+    @property
+    def visitor_name(self):
+        return self.visit.visitor_name if self.visit else '(sin registro de visita)'
+
+    @property
+    def visitor_document(self):
+        return self.visit.visitor_document if self.visit else ''
+
+    @property
+    def visitor_company(self):
+        return self.visit.visitor_company if self.visit else ''
+
+    @property
+    def host_display(self):
+        return self.visit.host_display if self.visit else ''
+
+    @property
+    def card_display(self):
+        return self.card_label or f'Tarjeta {self.card_no}'
+
+    @property
+    def delivered_by_name(self):
+        return self.visit.delivered_by_name if self.visit else ''
+
+    @property
+    def delivered_at(self):
+        return self.visit.delivered_at if self.visit else None
+
+    @property
+    def returned_at(self):
+        return self.visit.returned_at if self.visit else None
 
 
 @dataclass
@@ -38,15 +86,15 @@ class ReportData:
     date_from: datetime
     date_to: datetime            # exclusivo (día siguiente al último día)
     station: Station | None
-    grace_minutes: int
     shift_name: str = ''      # '' = todos los turnos
 
     servidas: int = 0
     personas_unicas: int = 0
     duplicados: int = 0
     no_autorizados: int = 0
-    sin_asociar: int = 0
+    sin_turno: int = 0           # marcaciones fuera de turno (rechazadas, no suman)
     visitas: int = 0             # colaciones servidas a visitas (tarjeta RFID)
+    visitas_sin_registro: int = 0  # de esas, con tarjeta entregada sin registro de visita
     manuales: int = 0            # colaciones de ingreso manual (incluidas en `servidas`)
 
     # Nombres de turno (desayuno, almuerzo, …) presentes en las colaciones servidas,
@@ -60,6 +108,13 @@ class ReportData:
     por_empresa: list = field(default_factory=list)  # [(empresa, total, comp)]
     por_persona: list = field(default_factory=list)  # [(nombre, empresa, total, comp)]
     por_turno: list = field(default_factory=list)    # [ShiftRow]
+    # Marcaciones rechazadas por no estar autorizadas (empresa, colación asignada o
+    # tarjeta de visita), en orden cronológico. `detail` trae el motivo.
+    no_autorizados_detalle: list = field(default_factory=list)  # [AccessEvent]
+    # Registro de visitas del período (a quién se entregó cada tarjeta, quién la entregó y
+    # a quién venía a ver) con las colaciones que retiró cada una; incluye las tarjetas
+    # usadas sin registro. Orden cronológico por entrega.
+    visitas_detalle: list = field(default_factory=list)  # [VisitRow]
 
     @property
     def display_to(self):
@@ -68,38 +123,16 @@ class ReportData:
             else self.date_to.date()
 
 
-def _attribute_shift(event, shifts, grace_minutes):
-    """
-    Turno al que se atribuye una marcación fuera de turno (igual que el C#):
-    el turno que empieza dentro de la ventana de gracia posterior a la marca;
-    en su defecto, el último turno terminado antes de la marca.
-    """
-    et = event.event_time
-
-    nexts = [s for s in shifts if s.started_at > et]
-    nexts.sort(key=lambda s: s.started_at)
-    if nexts:
-        nxt = nexts[0]
-        if (nxt.started_at - et).total_seconds() <= grace_minutes * 60:
-            return nxt
-
-    prevs = [s for s in shifts if s.ended_at is not None and s.ended_at <= et]
-    prevs.sort(key=lambda s: s.ended_at, reverse=True)
-    return prevs[0] if prevs else None
-
-
 def _local_date(dt) -> date:
     return timezone.localtime(dt).date() if timezone.is_aware(dt) else dt.date()
 
 
 def build_report(date_from: datetime, date_to: datetime,
                  station: Station | None = None,
-                 grace_minutes: int | None = None,
                  shift_name: str = '') -> ReportData:
-    if grace_minutes is None:
-        grace_minutes = settings.REPORT_GRACE_MINUTES
-
-    events_qs = AccessEvent.objects.filter(event_time__gte=date_from, event_time__lt=date_to)
+    events_qs = (AccessEvent.objects
+                 .filter(event_time__gte=date_from, event_time__lt=date_to)
+                 .select_related('station', 'shift'))
     shifts_qs = Shift.objects.filter(started_at__gte=date_from, started_at__lt=date_to)
     if station is not None:
         events_qs = events_qs.filter(station=station)
@@ -111,46 +144,40 @@ def build_report(date_from: datetime, date_to: datetime,
 
     events = list(events_qs)
     all_shifts = list(shifts_qs)
-    # Los registros de ingreso manual no son turnos con marcaciones: no participan en la
-    # atribución de marcaciones fuera de turno; su cantidad se suma aparte.
+    # Los registros de ingreso manual no son turnos con marcaciones: su cantidad se suma aparte.
     shifts = [s for s in all_shifts if s.manual_count is None]
     manual_shifts = [s for s in all_shifts if s.manual_count]
 
-    # Filtrado por turno: solo las marcaciones de esos turnos. Las de fuera de turno se
-    # conservan por ahora porque todavía pueden atribuirse a uno de ellos por la ventana
-    # de gracia; las que no se atribuyan quedan descartadas (son de otro turno).
-    selected_ids = {s.id for s in shifts} if shift_name else None
-    if selected_ids is not None:
-        events = [e for e in events
-                  if e.shift_id in selected_ids or e.status == AccessEvent.Status.SIN_TURNO]
+    # Filtrado por turno: solo las marcaciones de esos turnos (las de fuera de turno no
+    # pertenecen a ninguno, así que quedan fuera).
+    if shift_name:
+        selected_ids = {s.id for s in shifts}
+        events = [e for e in events if e.shift_id in selected_ids]
 
     data = ReportData(date_from=date_from, date_to=date_to,
-                      station=station, grace_minutes=grace_minutes,
+                      station=station,
                       shift_name=shift_name)
 
     ok_events = [e for e in events if e.status == AccessEvent.Status.OK]
-
-    # Marcaciones fuera de turno atribuidas (o no) a un turno.
-    asociadas = []          # (event, shift)
-    sin_asociar = 0
-    for e in events:
-        if e.status != AccessEvent.Status.SIN_TURNO:
-            continue
-        attributed = _attribute_shift(e, shifts, grace_minutes)
-        if attributed is not None:
-            asociadas.append((e, attributed))
-        elif selected_ids is None:
-            sin_asociar += 1
-
-    served = ok_events + [e for (e, _s) in asociadas]
+    served = ok_events
 
     data.manuales = sum(s.manual_count for s in manual_shifts)
     data.servidas = len(served) + data.manuales
     data.duplicados = sum(1 for e in events if e.status == AccessEvent.Status.DUPLICADO)
-    data.no_autorizados = sum(1 for e in events if e.status == AccessEvent.Status.NO_AUTORIZADO)
-    data.sin_asociar = sin_asociar
+    data.no_autorizados_detalle = sorted(
+        (e for e in events if e.status == AccessEvent.Status.NO_AUTORIZADO),
+        key=lambda e: e.event_time)
+    data.no_autorizados = len(data.no_autorizados_detalle)
+    data.sin_turno = sum(1 for e in events if e.status == AccessEvent.Status.SIN_TURNO)
     data.visitas = sum(1 for e in served if e.is_visitor)
     data.personas_unicas = len({e.employee_no for e in served})
+
+    # ---- Visitas: a quién se le había entregado la tarjeta en cada colación ----
+    visitor_ok = [e for e in served if e.is_visitor]
+    Visit.attach_to_events(visitor_ok)
+    data.visitas_sin_registro = sum(1 for e in visitor_ok if e.visit is None)
+    data.visitas_detalle = _visit_rows(visitor_ok, date_from, date_to, station,
+                                       solo_con_colaciones=bool(shift_name))
 
     # ---- Por día ----
     por_dia = defaultdict(int)
@@ -161,8 +188,8 @@ def build_report(date_from: datetime, date_to: datetime,
     data.por_dia = sorted(por_dia.items())
 
     # ---- Turno atribuido a cada colación servida ----
-    # Descompone los totales por tipo de colación (turno). Cada colación servida es una
-    # marcación "Ok" (turno = su propio turno) o una "SinTurno" asociada (turno atribuido).
+    # Descompone los totales por tipo de colación (turno): cada colación servida es una
+    # marcación "Ok" y su turno es el de la propia marcación.
     shift_by_id = {s.id: s for s in shifts}
     missing_ids = {e.shift_id for e in ok_events
                    if e.shift_id is not None and e.shift_id not in shift_by_id}
@@ -177,8 +204,6 @@ def build_report(date_from: datetime, date_to: datetime,
     served_turno = []  # (event, turno_name)
     for e in ok_events:
         served_turno.append((e, _turno_name(shift_by_id.get(e.shift_id))))
-    for (e, s) in asociadas:
-        served_turno.append((e, _turno_name(s)))
 
     # Orden de las columnas: por hora del día del turno (desayuno antes que almuerzo…);
     # los turnos sin hora conocida y '(sin turno)' quedan al final.
@@ -214,10 +239,17 @@ def build_report(date_from: datetime, date_to: datetime,
     per_comp = defaultdict(lambda: [0] * len(meal_types))
     persona_info = {}
     for (e, name) in served_turno:
-        key = (e.employee_no, e.person_name, e.company)
+        visit = getattr(e, 'visit', None)
+        if visit is not None:
+            # dos visitas distintas con la misma tarjeta son dos personas distintas
+            key = ('visita', visit.pk)
+            label = f'{visit.visitor_name} · {visit.card_display}'
+        else:
+            key = (e.employee_no, e.person_name, e.company)
+            label = e.person_name or '(desconocido)'
         per_total[key] += 1
         per_comp[key][idx[name]] += 1
-        persona_info[key] = (e.person_name or '(desconocido)', e.company)
+        persona_info[key] = (label, e.company)
     data.por_persona = [(persona_info[k][0], persona_info[k][1], per_total[k], per_comp[k])
                         for k in sorted(per_total, key=lambda k: per_total[k], reverse=True)]
 
@@ -226,18 +258,58 @@ def build_report(date_from: datetime, date_to: datetime,
     for e in ok_events:
         if e.shift_id is not None:
             en_turno_por_shift[e.shift_id] += 1
-    asociadas_por_shift = defaultdict(int)
-    for (_e, s) in asociadas:
-        asociadas_por_shift[s.id] += 1
 
     rows = []
     for s in sorted(shifts + manual_shifts, key=lambda x: x.started_at):
         rows.append(ShiftRow(
             shift=s,
             en_turno=en_turno_por_shift.get(s.id, 0),
-            asociadas=asociadas_por_shift.get(s.id, 0),
             manuales=s.manual_count or 0,
         ))
     data.por_turno = rows
 
     return data
+
+
+def _visit_rows(visitor_ok, date_from, date_to, station, solo_con_colaciones=False):
+    """
+    Filas de la sección «Visitas»: las visitas registradas cuya entrega cae en el período
+    (aunque no hayan retirado colación), más las que retiraron colación en el período
+    habiéndose entregado antes, más las tarjetas usadas sin registro de visita.
+    Con filtro por turno solo interesan las que retiraron en ese turno.
+    """
+    visits_qs = (Visit.objects.filter(delivered_at__gte=date_from, delivered_at__lt=date_to)
+                 .select_related('station').order_by('delivered_at'))
+    if station is not None:
+        visits_qs = visits_qs.filter(station=station)
+
+    rows = {}
+    for v in visits_qs:
+        rows[('v', v.pk)] = VisitRow(visit=v, card_no=v.card_no, card_label=v.card_label,
+                                     station=v.station, first_at=v.delivered_at)
+
+    labels = None
+    for e in visitor_ok:
+        if e.visit is not None:
+            key = ('v', e.visit.pk)
+            if key not in rows:
+                rows[key] = VisitRow(visit=e.visit, card_no=e.visit.card_no,
+                                     card_label=e.visit.card_label, station=e.station,
+                                     first_at=e.visit.delivered_at)
+        else:
+            key = ('c', e.station_id, e.card_no)
+            if key not in rows:
+                if labels is None:
+                    labels = {(c.station_id, c.card_no): c.label for c in VisitorCard.objects.all()}
+                rows[key] = VisitRow(visit=None, card_no=e.card_no,
+                                     card_label=labels.get((e.station_id, e.card_no), ''),
+                                     station=e.station, first_at=e.event_time)
+            elif e.event_time < rows[key].first_at:
+                rows[key].first_at = e.event_time
+        rows[key].colaciones += 1
+
+    out = list(rows.values())
+    if solo_con_colaciones:
+        out = [r for r in out if r.colaciones]
+    out.sort(key=lambda r: (r.first_at, r.card_no))
+    return out

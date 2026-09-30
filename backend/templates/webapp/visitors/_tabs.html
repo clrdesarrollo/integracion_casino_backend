@@ -1,0 +1,17 @@
+{# Encabezado común del módulo Visitas: Registro / Colaciones / Tarjetas (según los permisos del rol) #}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-1">
+  <h1 class="page-title"><i class="bi bi-person-badge"></i> Visitas</h1>
+  <ul class="nav nav-pills">
+    {% with caps=user.caps %}
+    {% if caps.visits %}
+    <li class="nav-item"><a class="nav-link {% if tab == 'visits' %}active{% endif %}" href="{% url 'webapp:visit_list' %}"><i class="bi bi-journal-check"></i> Registro de visitas</a></li>
+    {% endif %}
+    {% if caps.visit_events %}
+    <li class="nav-item"><a class="nav-link {% if tab == 'events' %}active{% endif %}" href="{% url 'webapp:visitor_events' %}"><i class="bi bi-camera"></i> Colaciones</a></li>
+    {% endif %}
+    {% if caps.visit_cards %}
+    <li class="nav-item"><a class="nav-link {% if tab == 'cards' %}active{% endif %}" href="{% url 'webapp:visitor_cards_index' %}"><i class="bi bi-credit-card-2-front"></i> Tarjetas</a></li>
+    {% endif %}
+    {% endwith %}
+  </ul>
+</div>

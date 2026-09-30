@@ -1,21 +1,40 @@
 {% extends 'base.html' %}
-{% block title %}Tarjetas de visita · {{ station.name }}{% endblock %}
-{% block nav_config %}active{% endblock %}
+{% block title %}Tarjetas de visita · {{ station.name }} · Casino Backoffice{% endblock %}
+{% block nav_visitors %}active{% endblock %}
 
 {% block content %}
-{% with tab='cards' %}{% include 'webapp/config/_station_tabs.html' %}{% endwith %}
+{% with tab='cards' %}{% include 'webapp/visitors/_tabs.html' %}{% endwith %}
+<div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+  <span class="fw-semibold">Inventario de tarjetas físicas · {{ station.name }}</span>
+  {% if stations|length > 1 %}
+  <div class="dropdown">
+    <button class="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown">Cambiar estación</button>
+    <ul class="dropdown-menu">
+      {% for s in stations %}
+      <li><a class="dropdown-item {% if s.pk == station.pk %}active{% endif %}" href="{% url 'webapp:visitor_card_list' s.pk %}">{{ s.name }}</a></li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+</div>
+<p class="ds-caption mb-3">
+  Las tarjetas que se entregan a las visitas. El inventario también se puede editar en el terminal
+  (Configuración → Visitas); en cada sincronización gana la edición más reciente
+  {% if station.config_updated_at %}(última: {{ station.config_updated_at|date:"d-m-Y H:i:s" }}){% endif %}
+  y el terminal la aplica en su próxima sincronización periódica (por defecto cada 2 minutos).
+</p>
 
 <div class="row g-3">
   <div class="col-lg-4">
     <div class="card shadow-sm">
-      <div class="card-header bg-white fw-semibold"><i class="bi bi-plus-lg"></i> Agregar tarjeta al set</div>
+      <div class="card-header bg-white fw-semibold"><i class="bi bi-plus-lg"></i> Agregar tarjeta al inventario</div>
       <div class="card-body">
         <form method="post">
           {% csrf_token %}
           <div class="mb-3">
             <label class="form-label">{{ form.card_no.label }}</label>{{ form.card_no }}
             {% for e in form.card_no.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
-            <div class="form-text">Debe ser el número tal como lo escribe el lector del terminal (en el terminal: Configuración → Visitas → «Leer tarjeta» lo captura solo).</div>
+            <div class="form-text">El número tal como lo reporta el equipo (es el mismo que figura en HikCentral; en el terminal, Configuración → Visitas → «Leer tarjeta» lo captura solo).</div>
           </div>
           <div class="mb-3"><label class="form-label">{{ form.label.label }}</label>{{ form.label }}</div>
           <div class="form-check mb-3">{{ form.enabled }}<label class="form-check-label">{{ form.enabled.label }}</label></div>
@@ -25,17 +44,20 @@
     </div>
     <div class="card shadow-sm mt-3 border-primary-subtle">
       <div class="card-body ds-caption">
-        <p class="mb-1"><strong>Cómo funciona:</strong> solo las visitas usan estas tarjetas. Al pasar la tarjeta, el terminal
-        fotografía a la visita, registra su colación como <span class="pill-tag-soft">VISITA</span>
+        <p class="mb-1"><strong>Para qué sirve:</strong> con este inventario el terminal reconoce que una tarjeta es de visita.
+        Al pasarla, fotografía a la visita, registra la colación como <span class="pill-tag-soft">VISITA</span> (se factura aparte)
         y aplica <strong>una colación por tarjeta por turno</strong>: si se repite, aparece como TARJETA REPETIDA.</p>
-        <p class="mb-0">Una tarjeta que no esté en el set (o esté deshabilitada) queda NO AUTORIZADA.</p>
+        <p class="mb-1"><strong>No habilita la tarjeta en el control de acceso.</strong> Quien la lee es el equipo Hikvision, así que
+        además debe estar dada de alta en HikCentral con su nivel de acceso. Una tarjeta que el equipo acepta pero no está aquí
+        se contaría como colación de la persona a la que HikCentral se la asignó, no como visita.</p>
+        <p class="mb-0">A quién se le entrega cada tarjeta se anota en <a href="{% url 'webapp:visit_list' %}">Registro de visitas</a>.</p>
       </div>
     </div>
   </div>
 
   <div class="col-lg-8">
     <div class="card shadow-sm">
-      <div class="card-header bg-white fw-semibold">Set de tarjetas <span class="text-muted fw-normal small">({{ cards|length }})</span></div>
+      <div class="card-header bg-white fw-semibold">Inventario <span class="text-muted fw-normal small">({{ cards|length }})</span></div>
       <div class="table-responsive">
         <table class="table table-hover mb-0 align-middle">
           <thead><tr><th>Nº tarjeta</th><th>Etiqueta</th><th>Creada</th><th>Estado</th><th class="text-end">Acciones</th></tr></thead>
@@ -51,13 +73,13 @@
                   <button class="btn btn-sm btn-outline-secondary" type="submit">{% if c.enabled %}Deshabilitar{% else %}Habilitar{% endif %}</button>
                 </form>
                 <form method="post" action="{% url 'webapp:visitor_card_delete' station.pk c.pk %}" class="d-inline"
-                      onsubmit="return confirm('¿Eliminar la tarjeta {{ c.card_no }} del set?');">{% csrf_token %}
+                      onsubmit="return confirm('¿Eliminar la tarjeta {{ c.card_no }} del inventario?');">{% csrf_token %}
                   <button class="btn btn-sm btn-outline-danger" type="submit"><i class="bi bi-trash"></i></button>
                 </form>
               </td>
             </tr>
             {% empty %}
-            <tr><td colspan="5" class="text-muted text-center py-3">Sin tarjetas en el set. Agrega las tarjetas que se entregarán a las visitas.</td></tr>
+            <tr><td colspan="5" class="text-muted text-center py-3">Sin tarjetas en el inventario. Agrega las tarjetas físicas que se entregarán a las visitas.</td></tr>
             {% endfor %}
           </tbody>
         </table>

@@ -50,7 +50,7 @@ def build_excel(data: ReportData, titulo: str) -> bytes:
         ('Visitas (tarjeta)', data.visitas),
         ('Ingreso manual', data.manuales),
         ('No autorizados', data.no_autorizados),
-        ('Fuera de turno sin asociar', data.sin_asociar),
+        ('Fuera de turno', data.sin_turno),
     ]
     for i, (label, val) in enumerate(resumen, start=row + 1):
         ws.write(i, 0, label, f_cell)
@@ -80,9 +80,9 @@ def build_excel(data: ReportData, titulo: str) -> bytes:
         s = r.shift
         fin = 'ingreso manual' if s.is_manual_entry else (_local_str(s.ended_at) or 'en curso')
         turno_rows.append((s.name, _local_str(s.started_at), fin,
-                           r.en_turno, r.asociadas, r.manuales, r.total))
+                           r.en_turno, r.manuales, r.total))
     sheet_table('Por turno',
-                ['Turno', 'Inicio', 'Término', 'En turno', 'Asociadas', 'Manual', 'Total'],
+                ['Turno', 'Inicio', 'Término', 'En turno', 'Manual', 'Total'],
                 turno_rows)
 
     # ---- Por empresa (con composición por turno) ----
@@ -95,6 +95,48 @@ def build_excel(data: ReportData, titulo: str) -> bytes:
                 ['Nombre', 'Empresa'] + data.meal_types + ['Total'],
                 [(nombre, empresa, *comp, total)
                  for nombre, empresa, total, comp in data.por_persona])
+
+    # ---- Visitas (registro de entrega de tarjetas) ----
+    w = sheet_table('Visitas',
+                    ['Entregada', 'Visita', 'RUT / documento', 'Procedencia', 'Viene a ver a',
+                     'Empresa visitada', 'Tarjeta', 'Nº tarjeta', 'Entregó', 'Devuelta',
+                     'Recibió', 'Estación', 'Colaciones', 'Observación'],
+                    [(_local_str(r.delivered_at) if r.registrada else
+                      f'{_local_str(r.first_at)} (sin registro; primera colación)',
+                      r.visitor_name,
+                      r.visitor_document,
+                      r.visitor_company,
+                      r.visit.host_name if r.registrada else '',
+                      r.visit.host_company if r.registrada else '',
+                      r.card_display,
+                      r.card_no,
+                      r.delivered_by_name,
+                      (_local_str(r.returned_at) or 'en uso') if r.registrada else '',
+                      r.visit.returned_by_name if r.registrada else '',
+                      r.station.name if r.station else '',
+                      r.colaciones,
+                      r.visit.notes if r.registrada else '')
+                     for r in data.visitas_detalle])
+    w.set_column(0, 0, 30)
+    w.set_column(1, 1, 26)
+    w.set_column(4, 5, 24)
+    w.set_column(13, 13, 40)
+
+    # ---- No autorizados (con el motivo) ----
+    w = sheet_table('No autorizados',
+                    ['Fecha', 'Nombre', 'Nº empleado / tarjeta', 'Empresa', 'Estación',
+                     'Turno', 'Visita', 'Motivo'],
+                    [(_local_str(e.event_time),
+                      e.person_name or '(desconocido)',
+                      (e.card_no if e.is_visitor and e.card_no else e.employee_no) or '',
+                      e.company or '',
+                      e.station.name,
+                      e.shift.name if e.shift else '',
+                      'sí' if e.is_visitor else '',
+                      e.detail or '')
+                     for e in data.no_autorizados_detalle])
+    w.set_column(0, 0, 17)
+    w.set_column(7, 7, 60)
 
     wb.close()
     return buf.getvalue()

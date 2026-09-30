@@ -19,12 +19,12 @@
 <nav class="navbar app-navbar">
   <div class="container-fluid">
     {# al inicio de cada quien: el personal del casino no tiene panel #}
-    <a class="navbar-brand" href="{% url user.home_url_name %}">
+    <a class="navbar-brand" href="{% if user.home_url_name %}{% url user.home_url_name %}{% else %}#{% endif %}">
       <img src="{% static 'img/jemo-logo.webp' %}" alt="jemo" class="brand-logo">
       <span class="brand-sep">·</span> Casino Backoffice
     </a>
     <div class="d-flex align-items-center">
-      <span class="app-user me-3">{{ user.full_name }} · {{ user.get_role_display }}</span>
+      <span class="app-user me-3">{{ user.full_name }} · {{ user.role.name }}</span>
       <a href="{% url 'logout' %}" class="btn btn-sm btn-light">
         <i class="bi bi-box-arrow-right"></i> Salir
       </a>
@@ -38,19 +38,28 @@
       <div class="sidebar">
         {# El menú refleja los permisos del rol: no se ofrece lo que la vista va a negar. #}
         <ul class="nav flex-column">
-          {% if user.can_see_dashboard %}
+          {% with caps=user.caps %}
+          {% if caps.dashboard %}
           <li class="nav-item"><a class="nav-link {% block nav_dashboard %}{% endblock %}" href="{% url 'webapp:dashboard' %}"><i class="bi bi-speedometer2"></i> Panel</a></li>
           {% endif %}
-          {% if user.can_see_tickets %}
+          {% if caps.monitor %}
           <li class="nav-item"><a class="nav-link {% block nav_monitor %}{% endblock %}" href="{% url 'webapp:monitor' %}"><i class="bi bi-broadcast"></i> Monitor en vivo</a></li>
-          <li class="nav-item"><a class="nav-link {% block nav_visitors %}{% endblock %}" href="{% url 'webapp:visitor_events' %}"><i class="bi bi-person-badge"></i> Colaciones de visitas</a></li>
+          {% endif %}
+          {% if caps.visits or caps.visit_events or caps.visit_cards %}
+          <li class="nav-item"><a class="nav-link {% block nav_visitors %}{% endblock %}" href="{% if caps.visits %}{% url 'webapp:visit_list' %}{% elif caps.visit_events %}{% url 'webapp:visitor_events' %}{% else %}{% url 'webapp:visitor_cards_index' %}{% endif %}"><i class="bi bi-person-badge"></i> Visitas</a></li>
+          {% endif %}
+          {% if caps.reports %}
           <li class="nav-item"><a class="nav-link {% block nav_reports %}{% endblock %}" href="{% url 'reports:report' %}"><i class="bi bi-file-earmark-bar-graph"></i> Reportería</a></li>
           {% endif %}
-          {% if user.is_admin %}
+          {% if caps.config %}
           <li class="nav-item"><a class="nav-link {% block nav_config %}{% endblock %}" href="{% url 'webapp:config_index' %}"><i class="bi bi-calendar2-week"></i> Turnos y empresas</a></li>
           <li class="nav-item"><a class="nav-link {% block nav_stations %}{% endblock %}" href="{% url 'webapp:station_list' %}"><i class="bi bi-hdd-network"></i> Estaciones</a></li>
-          <li class="nav-item"><a class="nav-link {% block nav_users %}{% endblock %}" href="{% url 'webapp:user_list' %}"><i class="bi bi-people"></i> Usuarios</a></li>
           {% endif %}
+          {% if caps.users %}
+          <li class="nav-item"><a class="nav-link {% block nav_users %}{% endblock %}" href="{% url 'webapp:user_list' %}"><i class="bi bi-people"></i> Usuarios</a></li>
+          <li class="nav-item"><a class="nav-link {% block nav_roles %}{% endblock %}" href="{% url 'webapp:role_list' %}"><i class="bi bi-shield-lock"></i> Roles</a></li>
+          {% endif %}
+          {% endwith %}
         </ul>
       </div>
     </aside>

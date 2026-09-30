@@ -5,14 +5,70 @@ from django.contrib.auth.models import PermissionsMixin
 from django.contrib.auth.base_user import AbstractBaseUser
 from django.db import models
 from django.utils import timezone
+from django.utils.text import slugify
 from rest_framework_api_key.models import AbstractAPIKey
 
+from backend.apps.core.access import CAPABILITIES, CAPABILITY_CODES
 from backend.apps.core.managers import UserManager
 
 
 def new_uid():
     """Identidad estable en el mismo formato que genera el terminal (hex de 32 caracteres)."""
     return uuid.uuid4().hex
+
+
+# =====================================================================
+#  Roles del backoffice
+# =====================================================================
+class Role(models.Model):
+    """
+    Conjunto de capacidades (ver `core.access`) que se asigna a los usuarios.
+
+    Los roles se crean y editan desde el backoffice. Hay uno especial, el administrador
+    (`is_admin`): tiene siempre todas las capacidades y no se puede editar ni borrar, para
+    que nadie se quede sin cómo administrar el sistema.
+    """
+
+    name = models.CharField('nombre', max_length=80, unique=True)
+    # identificador estable: los tres roles originales son admin, gerente y casino
+    code = models.SlugField('código', max_length=60, unique=True, editable=False)
+    description = models.CharField('descripción', max_length=255, blank=True)
+    permissions = models.JSONField('permisos', default=list, blank=True)
+    # acceso total: solo el administrador del sistema
+    is_admin = models.BooleanField('acceso total', default=False, editable=False)
+    # los roles de sistema no se pueden eliminar
+    is_system = models.BooleanField('rol de sistema', default=False, editable=False)
+    created_at = models.DateTimeField('creado', auto_now_add=True)
+
+    class Meta:
+        db_table = 'tb_role'
+        verbose_name = 'rol'
+        verbose_name_plural = 'roles'
+        ordering = ['-is_admin', 'name']
+
+    def __str__(self):
+        return self.name
+
+    def save(self, *args, **kwargs):
+        if self.is_admin:
+            self.permissions = list(CAPABILITY_CODES)
+        else:
+            # solo códigos conocidos y sin repetir (una capacidad retirada del catálogo
+            # no debe quedar como permiso fantasma)
+            self.permissions = [c for c in CAPABILITY_CODES if c in set(self.permissions or [])]
+        if not self.code:
+            self.code = self._unique_code()
+        return super().save(*args, **kwargs)
+
+    def _unique_code(self):
+        base = slugify(self.name)[:50] or 'rol'
+        code, n = base, 2
+        while Role.objects.filter(code=code).exists():
+            code, n = f'{base}-{n}', n + 1
+        return code
+
+    def allows(self, capability):
+        return self.is_admin or capability in (self.permissions or [])
 
 
 # =====================================================================
@@ -26,16 +82,13 @@ class User(AbstractBaseUser, PermissionsMixin):
     acceso implícito por estar autenticado (ver `backend.apps.webapp.permissions`).
     """
 
-    class Role(models.TextChoices):
-        ADMIN = 'admin', 'Administrador del sistema'
-        MANAGER = 'gerente', 'Gerente de administración'
-        CASINO = 'casino', 'Personal del casino'
-
     email = models.EmailField('correo', unique=True)
     first_name = models.CharField('nombre', max_length=150, blank=True)
     last_name = models.CharField('apellido', max_length=150, blank=True)
-    # el rol más restringido es el de partida: dar acceso es una decisión explícita
-    role = models.CharField('rol', max_length=10, choices=Role.choices, default=Role.CASINO)
+    # PROTECT: no se elimina un rol que aún tiene usuarios. Si no se indica, el manager
+    # asigna el rol «casino», el más restringido: dar acceso es una decisión explícita.
+    role = models.ForeignKey(Role, verbose_name='rol', on_delete=models.PROTECT,
+                             related_name='users')
 
     is_active = models.BooleanField('activo', default=True)
     is_staff = models.BooleanField('acceso al admin', default=False)
@@ -61,7 +114,7 @@ class User(AbstractBaseUser, PermissionsMixin):
         # El rol manda sobre el acceso al panel /admin de Django: si se centralizara solo
         # en el formulario, cambiar el rol por otra vía (shell, admin, importación) dejaría
         # a un ex-administrador con la puerta abierta.
-        self.is_staff = self.is_superuser or self.role == self.Role.ADMIN
+        self.is_staff = self.is_superuser or self.role.is_admin
         # Un save() parcial que toque el rol debe escribir is_staff también, o el valor
         # recalculado se quedaría en memoria y el ex-administrador conservaría el acceso.
         update_fields = kwargs.get('update_fields')
@@ -95,33 +148,28 @@ class User(AbstractBaseUser, PermissionsMixin):
     # Un superusuario siempre pasa (cuenta de rescate creada por consola).
     @property
     def is_admin(self):
-        """Administrador del sistema: acceso a todo, incluida la configuración."""
-        return self.is_superuser or self.role == self.Role.ADMIN
+        """Administrador del sistema: acceso total, incluido el panel /admin de Django."""
+        return self.is_superuser or self.role.is_admin
+
+    def has_cap(self, capability):
+        """¿Puede usar esta capacidad del backoffice? (ver `core.access`)"""
+        return self.is_superuser or self.role.allows(capability)
 
     @property
-    def can_see_tickets(self):
-        """
-        Colaciones emitidas: monitor en vivo, control de visitas y reportería.
-        Es lo que comparten el gerente de administración y el personal del casino.
-        """
-        return self.is_admin or self.role in (self.Role.MANAGER, self.Role.CASINO)
-
-    @property
-    def can_see_dashboard(self):
-        """El panel resume la operación completa: no es para el personal del casino."""
-        return self.is_admin or self.role == self.Role.MANAGER
+    def caps(self):
+        """Capacidades como diccionario, para las plantillas: `{% if user.caps.reports %}`."""
+        return {c.code: self.has_cap(c.code) for c in CAPABILITIES}
 
     @property
     def home_url_name(self):
         """
-        Sección de entrada tras iniciar sesión, según lo que el rol puede ver.
-        None si el rol no da acceso a ninguna sección: en ese caso no hay a dónde
-        redirigir y se responde 403 (redirigir provocaría un bucle).
+        Sección de entrada tras iniciar sesión: la primera que el rol puede ver.
+        None si el rol no da acceso a ninguna: en ese caso no hay a dónde redirigir y se
+        responde 403 (redirigir provocaría un bucle).
         """
-        if self.can_see_dashboard:
-            return 'webapp:dashboard'
-        if self.can_see_tickets:
-            return 'webapp:monitor'
+        for cap in CAPABILITIES:
+            if self.has_cap(cap.code):
+                return cap.home
         return None
 
 
@@ -590,3 +638,137 @@ class VisitorCard(models.Model):
     @property
     def display_name(self):
         return self.label or f'Visita · Tarjeta {self.card_no}'
+
+# =====================================================================
+#  Registro de visitas: a quién se entregó cada tarjeta física, quién la entregó y a
+#  quién venía a ver. Es el respaldo administrativo de las colaciones de visita.
+# =====================================================================
+class VisitQuerySet(models.QuerySet):
+    def open(self):
+        """Visitas con la tarjeta todavía entregada (sin devolución registrada)."""
+        return self.filter(returned_at__isnull=True)
+
+
+class Visit(models.Model):
+    """
+    Entrega de una tarjeta de visita a una persona concreta.
+
+    La tarjeta se identifica por su número (no por FK a `VisitorCard`): el set de tarjetas
+    se reemplaza completo cuando el terminal sincroniza su configuración, y el registro de
+    la visita debe sobrevivir a eso. La etiqueta se guarda como estaba al entregar.
+
+    El funcionario visitado se toma de la ficha de personas de la estación (HikCentral),
+    pero se conserva su nombre en texto: la ficha puede desaparecer al resincronizar y la
+    visita debe seguir diciendo a quién vino a ver.
+    """
+
+    station = models.ForeignKey(Station, on_delete=models.CASCADE, related_name='visits')
+
+    # --- tarjeta entregada ---
+    card_no = models.CharField('nº tarjeta', max_length=100)
+    card_label = models.CharField('etiqueta de la tarjeta', max_length=120, blank=True)
+
+    # --- la visita ---
+    visitor_name = models.CharField('nombre de la visita', max_length=200)
+    visitor_document = models.CharField('RUT / documento', max_length=40, blank=True)
+    visitor_company = models.CharField('empresa de procedencia', max_length=200, blank=True)
+
+    # --- a quién viene a ver ---
+    host_company = models.CharField('empresa visitada', max_length=200, blank=True)
+    host_person = models.ForeignKey(
+        Person, on_delete=models.SET_NULL, blank=True, null=True, related_name='hosted_visits',
+    )
+    host_name = models.CharField('funcionario visitado', max_length=200, blank=True)
+
+    # --- quién entregó / recibió la tarjeta ---
+    delivered_by = models.ForeignKey(
+        'User', on_delete=models.SET_NULL, blank=True, null=True, related_name='visits_delivered',
+    )
+    delivered_by_name = models.CharField('entregada por', max_length=200, blank=True)
+    delivered_at = models.DateTimeField('entregada el', default=timezone.now)
+    returned_by = models.ForeignKey(
+        'User', on_delete=models.SET_NULL, blank=True, null=True, related_name='visits_returned',
+    )
+    returned_by_name = models.CharField('recibida por', max_length=200, blank=True)
+    returned_at = models.DateTimeField('devuelta el', blank=True, null=True)
+
+    notes = models.CharField('observación', max_length=300, blank=True)
+    created_at = models.DateTimeField('creada', auto_now_add=True)
+
+    objects = VisitQuerySet.as_manager()
+
+    class Meta:
+        db_table = 'tb_visit'
+        verbose_name = 'visita'
+        verbose_name_plural = 'visitas'
+        ordering = ['-delivered_at']
+        indexes = [
+            models.Index(fields=['station', 'card_no', 'delivered_at']),
+            models.Index(fields=['delivered_at']),
+        ]
+
+    def __str__(self):
+        return f'{self.visitor_name} · tarjeta {self.card_no} · {self.delivered_at:%d-%m %H:%M}'
+
+    @property
+    def is_open(self):
+        return self.returned_at is None
+
+    @property
+    def card_display(self):
+        return self.card_label or f'Tarjeta {self.card_no}'
+
+    @property
+    def host_display(self):
+        """«Nicolás Muñoz (PTJ)», solo la empresa, solo el nombre, o vacío."""
+        name, company = self.host_name.strip(), self.host_company.strip()
+        if name and company:
+            return f'{name} ({company})'
+        return name or company
+
+    def covers(self, when):
+        """La tarjeta estaba en manos de esta visita en el instante `when`."""
+        if when < self.delivered_at:
+            return False
+        return self.returned_at is None or when < self.returned_at
+
+    def close(self, user=None, when=None):
+        """Registra la devolución de la tarjeta (idempotente)."""
+        if self.returned_at is not None:
+            return
+        self.returned_at = when or timezone.now()
+        self.returned_by = user if (user is not None and user.pk) else None
+        self.returned_by_name = user.full_name if user is not None else ''
+        self.save(update_fields=['returned_at', 'returned_by', 'returned_by_name'])
+
+    @classmethod
+    def attach_to_events(cls, events):
+        """
+        Pone en cada marcación de visita el registro de visita vigente para su tarjeta
+        (`event.visit`, None si la tarjeta se usó sin registrar la entrega).
+
+        Una sola consulta: las visitas de esas tarjetas entregadas antes de la última
+        marcación y no devueltas antes de la primera.
+        """
+        events = [e for e in events if e.is_visitor and e.card_no]
+        if not events:
+            return
+        times = [e.event_time for e in events]
+        first, last = min(times), max(times)
+        keys = {(e.station_id, e.card_no) for e in events}
+        candidates = (cls.objects
+                      .filter(station_id__in={k[0] for k in keys},
+                              card_no__in={k[1] for k in keys},
+                              delivered_at__lte=last)
+                      .filter(models.Q(returned_at__isnull=True) | models.Q(returned_at__gt=first))
+                      .order_by('delivered_at'))
+        by_card = {}
+        for v in candidates:
+            by_card.setdefault((v.station_id, v.card_no), []).append(v)
+        for e in events:
+            e.visit = None
+            # la más reciente que cubra el instante: si se reentregó sin devolver, manda la nueva
+            for v in reversed(by_card.get((e.station_id, e.card_no), [])):
+                if v.covers(e.event_time):
+                    e.visit = v
+                    break

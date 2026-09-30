@@ -2,11 +2,8 @@
 Control de acceso del backoffice.
 
 Regla: estar autenticado NO da acceso a nada por sí solo. Cada vista declara qué
-capacidad exige y el rol del usuario decide (ver `User.Role`):
-
-- Administrador del sistema : todo, incluida la configuración (turnos, estaciones, usuarios).
-- Gerente de administración : toda la información de colaciones emitidas + el panel.
-- Personal del casino       : las colaciones emitidas (monitor, visitas, reportería).
+capacidad exige (ver `core.access`) y el rol del usuario decide (ver `core.Role`). Los roles
+se editan desde el propio backoffice; el administrador del sistema tiene siempre todas.
 
 Cuando se niega el acceso se redirige a la sección de entrada del propio usuario, nunca
 a una página que tampoco puede ver: eso provocaría un bucle de redirecciones.
@@ -52,13 +49,6 @@ def _guard(check):
     return decorator
 
 
-#: Configuración del sistema: turnos, estaciones, API keys y usuarios.
-admin_required = _guard(lambda u: u.is_admin)
-
-#: Colaciones emitidas: monitor en vivo, control de visitas y reportería.
-tickets_required = _guard(lambda u: u.can_see_tickets)
-
-#: Panel con el resumen de la operación. El panel es además la raíz del sitio, así que
-#: su vista despacha por su cuenta (ver `webapp.views.dashboard`) para no mostrar un
-#: error de permisos a quien simplemente entró a "/" tras iniciar sesión.
-dashboard_required = _guard(lambda u: u.can_see_dashboard)
+def capability_required(capability):
+    """Exige una capacidad del catálogo (`core.access.CAPABILITIES`)."""
+    return _guard(lambda u: u.has_cap(capability))

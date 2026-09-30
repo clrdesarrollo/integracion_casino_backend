@@ -1,0 +1,29 @@
+{% extends 'base.html' %}
+{% block title %}Tarjetas de visita · Casino Backoffice{% endblock %}
+{% block nav_visitors %}active{% endblock %}
+
+{% block content %}
+{% with tab='cards' %}{% include 'webapp/visitors/_tabs.html' %}{% endwith %}
+<p class="ds-caption mb-3">Cada estación tiene su propio inventario de tarjetas físicas de visita. Elige la estación.</p>
+
+<div class="card shadow-sm">
+  <div class="table-responsive">
+    <table class="table table-hover mb-0 align-middle">
+      <thead><tr><th>Estación</th><th>Tarjetas</th><th class="text-end">Acciones</th></tr></thead>
+      <tbody>
+        {% for s in stations %}
+        <tr>
+          <td>{{ s.name }}</td>
+          <td>{{ s.visitor_cards.count }}</td>
+          <td class="text-end">
+            <a href="{% url 'webapp:visitor_card_list' s.pk %}" class="btn btn-sm btn-outline-primary"><i class="bi bi-credit-card-2-front"></i> Ver tarjetas</a>
+          </td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="3" class="text-muted text-center py-3">Sin estaciones. Crea una en «Estaciones» y enrola el terminal.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

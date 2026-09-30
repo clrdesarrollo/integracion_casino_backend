@@ -1,5 +1,6 @@
 """Genera el informe de colaciones en PDF (reportlab), con el estilo del informe C#."""
 import io
+from xml.sax.saxutils import escape
 
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_RIGHT
@@ -111,7 +112,7 @@ def build_pdf(data: ReportData, titulo: str) -> bytes:
         stat(data.visitas, 'Visitas (tarjeta)', '#3A3A3C'),
         stat(data.manuales, 'Ingreso manual', '#3A3A3C'),
         stat(data.no_autorizados, 'No autorizados', '#C8102E'),
-        stat(data.sin_asociar, 'Fuera de turno s/asociar', '#6E6E73'),
+        stat(data.sin_turno, 'Fuera de turno', '#6E6E73'),
     ]
     # cada tarjeta es una mini-tabla en una columna
     cards = [[Table([[s[0]], [s[1]]]) for s in stats]]
@@ -154,9 +155,7 @@ def build_pdf(data: ReportData, titulo: str) -> bytes:
     if data.por_turno:
         story.append(Paragraph('Colaciones por turno', section))
         story.append(Paragraph(
-            f'«Asociadas» = marcaciones fuera de turno atribuidas a este turno '
-            f'(hasta {data.grace_minutes} min antes del inicio, o tras el término del anterior). '
-            f'«Manual» = cantidad registrada por la cocinera en un turno sin marcación.',
+            '«Manual» = cantidad registrada por la cocinera en un turno sin marcación.',
             small))
         story.append(Spacer(1, 2 * mm))
         rows = []
@@ -167,12 +166,12 @@ def build_pdf(data: ReportData, titulo: str) -> bytes:
                 fin = 'ingreso manual'
             else:
                 fin = _local(s.ended_at) if s.ended_at else 'en curso'
-            rows.append([s.name, ini, fin, str(r.en_turno), str(r.asociadas),
+            rows.append([s.name, ini, fin, str(r.en_turno),
                          str(r.manuales), str(r.total)])
         story.append(data_table(
-            ['Turno', 'Inicio', 'Término', 'En turno', 'Asociadas', 'Manual', 'Total'],
-            rows, [38 * mm, 26 * mm, 28 * mm, 20 * mm, 22 * mm, 18 * mm, 18 * mm],
-            right_cols=[3, 4, 5, 6]))
+            ['Turno', 'Inicio', 'Término', 'En turno', 'Manual', 'Total'],
+            rows, [44 * mm, 28 * mm, 32 * mm, 22 * mm, 22 * mm, 22 * mm],
+            right_cols=[3, 4, 5]))
 
     meal_types = data.meal_types
     n = len(meal_types)
@@ -212,6 +211,75 @@ def build_pdf(data: ReportData, titulo: str) -> bytes:
         col_widths = [remaining * 0.56, remaining * 0.44] + [meal_w] * n + [total_w]
         story.append(data_table(headers, rows, col_widths,
                                 right_cols=list(range(2, n + 3))))
+
+    # ---- Visitas (registro de entrega de tarjetas) ----
+    if data.visitas_detalle:
+        story.append(Paragraph('Visitas', section))
+        nota = ('A quién se entregó cada tarjeta de visita, quién la entregó y a quién venía a ver, '
+                'con las colaciones que retiró en el período.')
+        if data.visitas_sin_registro:
+            nota += (f' {data.visitas_sin_registro} colación(es) se retiraron con tarjeta '
+                     'sin registro de visita.')
+        story.append(Paragraph(nota, small))
+        story.append(Spacer(1, 2 * mm))
+        cell = ParagraphStyle('vcell', parent=styles['Normal'], fontSize=8, leading=10)
+        cell_muted = ParagraphStyle('vcellm', parent=cell, textColor=MUTED)
+        con_estacion = data.station is None
+        headers = ['Entregada', 'Visita', 'Viene a ver a', 'Tarjeta', 'Entregó', 'Devuelta']             + (['Estación'] if con_estacion else []) + ['Colac.']
+        rows = []
+        for r in data.visitas_detalle:
+            if r.registrada:
+                visita = escape(r.visitor_name)
+                extra = ' · '.join(x for x in (r.visitor_document, r.visitor_company) if x)
+                if extra:
+                    visita += f'<br/><font color="#6E6E73">{escape(extra)}</font>'
+                entregada = _local(r.delivered_at)
+                devuelta = _local(r.returned_at) if r.returned_at else 'en uso'
+                entrego = escape(r.delivered_by_name or '—')
+                style = cell
+            else:
+                visita = 'Sin registro de visita'
+                entregada = _local(r.first_at) + '*'
+                devuelta, entrego = '—', '—'
+                style = cell_muted
+            row = [entregada, Paragraph(visita, style),
+                   Paragraph(escape(r.host_display or '—'), style),
+                   Paragraph(f'{escape(r.card_display)}<br/><font color="#6E6E73">{escape(r.card_no)}</font>', style),
+                   Paragraph(entrego, style), devuelta]
+            if con_estacion:
+                row.append(Paragraph(escape(r.station.name if r.station else '—'), style))
+            row.append(str(r.colaciones))
+            rows.append(row)
+        widths = [20 * mm, 40 * mm, 40 * mm, 28 * mm, 26 * mm, 18 * mm]             + ([18 * mm] if con_estacion else [])
+        widths.append(186 * mm - sum(widths))
+        story.append(data_table(headers, rows, widths, right_cols=[len(headers) - 1]))
+        if any(not r.registrada for r in data.visitas_detalle):
+            story.append(Paragraph('* hora de la primera colación: la tarjeta se usó sin registrar la entrega.', small))
+
+    # ---- No autorizados (con el motivo) ----
+    if data.no_autorizados_detalle:
+        story.append(Paragraph('No autorizados', section))
+        story.append(Paragraph('Marcaciones rechazadas en el terminal, con el motivo.', small))
+        story.append(Spacer(1, 2 * mm))
+        cell = ParagraphStyle('cell', parent=styles['Normal'], fontSize=8, leading=10)
+        con_estacion = data.station is None
+        headers = ['Fecha', 'Nombre', 'Nº / tarjeta', 'Empresa']             + (['Estación'] if con_estacion else []) + ['Turno', 'Motivo']
+        rows = []
+        for e in data.no_autorizados_detalle:
+            nombre = e.person_name or '(desconocido)'
+            if e.is_visitor:
+                nombre += ' (visita)'
+            ident = (e.card_no if e.is_visitor and e.card_no else e.employee_no) or '—'
+            row = [_local(e.event_time), Paragraph(escape(nombre), cell), ident,
+                   Paragraph(escape(e.company or '—'), cell)]
+            if con_estacion:
+                row.append(Paragraph(escape(e.station.name), cell))
+            row += [Paragraph(escape(e.shift.name if e.shift else '—'), cell),
+                    Paragraph(escape(e.detail or '—'), cell)]
+            rows.append(row)
+        widths = [22 * mm, 36 * mm, 22 * mm, 24 * mm]             + ([22 * mm] if con_estacion else []) + [20 * mm]
+        widths.append(186 * mm - sum(widths))
+        story.append(data_table(headers, rows, widths))
 
     doc.build(story, onLaterPages=_footer, onFirstPage=_footer)
     return buf.getvalue()

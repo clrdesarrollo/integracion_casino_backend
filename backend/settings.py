@@ -188,7 +188,6 @@ LOGOUT_REDIRECT_URL = '/login/'
 
 
 # ---- Reportería ----
-REPORT_GRACE_MINUTES = int(os.getenv('REPORT_GRACE_MINUTES', '15'))
 
 
 # ---- Superusuario inicial (comando ensure_superuser) ----

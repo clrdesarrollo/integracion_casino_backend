@@ -59,13 +59,15 @@
   <div class="col"><div class="card stat-card shadow-sm"><div class="card-body">
     <div class="value is-warning">{{ data.duplicados }}</div><div class="label">Intentos duplicados</div></div></div></div>
   <div class="col"><div class="card stat-card shadow-sm"><div class="card-body">
-    <div class="value is-info">{{ data.visitas }}</div><div class="label">Visitas (tarjeta)</div></div></div></div>
+    <div class="value is-info">{{ data.visitas }}</div><div class="label">Visitas (tarjeta)</div>
+    {% if data.visitas_detalle %}<a href="#visitas" class="stretched-link" aria-label="Ver el registro de visitas"></a>{% endif %}</div></div></div>
   <div class="col"><div class="card stat-card shadow-sm"><div class="card-body">
     <div class="value is-info">{{ data.manuales }}</div><div class="label">Ingreso manual</div></div></div></div>
   <div class="col"><div class="card stat-card shadow-sm"><div class="card-body">
-    <div class="value is-danger">{{ data.no_autorizados }}</div><div class="label">No autorizados</div></div></div></div>
+    <div class="value is-danger">{{ data.no_autorizados }}</div><div class="label">No autorizados</div>
+    {% if data.no_autorizados %}<a href="#no-autorizados" class="stretched-link" aria-label="Ver detalle de no autorizados"></a>{% endif %}</div></div></div>
   <div class="col"><div class="card stat-card shadow-sm"><div class="card-body">
-    <div class="value text-muted">{{ data.sin_asociar }}</div><div class="label">Fuera de turno s/asociar</div></div></div></div>
+    <div class="value text-muted">{{ data.sin_turno }}</div><div class="label">Fuera de turno</div></div></div></div>
 </div>
 
 <div class="row g-3">
@@ -113,10 +115,10 @@
   <div class="col-12">
     <div class="card shadow-sm">
       <div class="card-header">Colaciones por turno
-        <span class="ds-caption fw-normal">— «En turno»: colaciones válidas dentro del turno. «Asociadas»: marcaciones fuera de turno que se atribuyen a este (hasta {{ data.grace_minutes }} min antes de su inicio, o tras el término del anterior). «Manual»: cantidad registrada por la cocinera en un turno sin marcación.</span>
+        <span class="ds-caption fw-normal">— «En turno»: colaciones válidas dentro del turno. «Manual»: cantidad registrada por la cocinera en un turno sin marcación.</span>
       </div>
       <div class="table-responsive"><table class="table table-sm mb-0">
-        <thead><tr><th>Turno</th><th>Inicio</th><th>Término</th><th class="text-end">En turno</th><th class="text-end">Asociadas</th><th class="text-end">Manual</th><th class="text-end">Total</th></tr></thead>
+        <thead><tr><th>Turno</th><th>Inicio</th><th>Término</th><th class="text-end">En turno</th><th class="text-end">Manual</th><th class="text-end">Total</th></tr></thead>
         <tbody>
           {% for r in data.por_turno %}
           <tr>
@@ -124,11 +126,74 @@
             <td>{{ r.shift.started_at|date:"d-m H:i" }}</td>
             <td>{% if r.shift.is_manual_entry %}<span class="badge bg-info">ingreso manual</span>{% elif r.shift.ended_at %}{{ r.shift.ended_at|date:"d-m H:i" }}{% else %}<span class="text-muted">en curso</span>{% endif %}</td>
             <td class="text-end">{{ r.en_turno }}</td>
-            <td class="text-end">{{ r.asociadas }}</td>
             <td class="text-end">{{ r.manuales }}</td>
             <td class="text-end fw-semibold">{{ r.total }}</td>
           </tr>
-          {% empty %}<tr><td colspan="7" class="text-muted text-center py-3">Sin turnos en el período.</td></tr>{% endfor %}
+          {% empty %}<tr><td colspan="6" class="text-muted text-center py-3">Sin turnos en el período.</td></tr>{% endfor %}
+        </tbody>
+      </table></div>
+    </div>
+  </div>
+
+  <!-- Visitas: registro de entrega de tarjetas -->
+  <div class="col-12" id="visitas">
+    <div class="card shadow-sm">
+      <div class="card-header">Visitas
+        <span class="ds-caption fw-normal">— a quién se entregó cada tarjeta, quién la entregó y a quién venía a ver, con sus colaciones del período</span>
+        {% if data.visitas_sin_registro %}<span class="badge text-bg-warning ms-1">{{ data.visitas_sin_registro }} sin registro</span>{% endif %}
+      </div>
+      <div class="table-responsive"><table class="table table-sm mb-0">
+        <thead><tr>
+          <th>Entregada</th><th>Visita</th><th>Viene a ver a</th><th>Tarjeta</th><th>Entregó</th><th>Devuelta</th>
+          {% if not station %}<th>Estación</th>{% endif %}
+          <th class="text-end">Colaciones</th>
+        </tr></thead>
+        <tbody>
+          {% for r in data.visitas_detalle %}
+          <tr{% if not r.registrada %} class="text-muted"{% endif %}>
+            <td class="text-nowrap">{% if r.registrada %}{{ r.delivered_at|date:"d-m H:i" }}{% else %}{{ r.first_at|date:"d-m H:i" }} <span class="ds-micro">(1ª colación)</span>{% endif %}</td>
+            <td>
+              {% if r.registrada %}{{ r.visitor_name }}
+                {% if r.visitor_document or r.visitor_company %}<div class="ds-micro text-muted">{{ r.visitor_document }}{% if r.visitor_document and r.visitor_company %} · {% endif %}{{ r.visitor_company }}</div>{% endif %}
+              {% else %}<span class="badge text-bg-light border text-muted">sin registro de visita</span>{% endif %}
+            </td>
+            <td>{{ r.host_display|default:"—" }}</td>
+            <td>{{ r.card_display }} <code class="ds-micro text-muted">{{ r.card_no }}</code></td>
+            <td>{{ r.delivered_by_name|default:"—" }}</td>
+            <td class="text-nowrap">{% if not r.registrada %}—{% elif r.returned_at %}{{ r.returned_at|date:"d-m H:i" }}{% else %}<span class="badge text-bg-warning">en uso</span>{% endif %}</td>
+            {% if not station %}<td>{{ r.station.name }}</td>{% endif %}
+            <td class="text-end fw-semibold">{{ r.colaciones }}</td>
+          </tr>
+          {% empty %}<tr><td colspan="{% if station %}7{% else %}8{% endif %}" class="text-muted text-center py-3">Sin visitas en el período.</td></tr>{% endfor %}
+        </tbody>
+      </table></div>
+    </div>
+  </div>
+
+  <!-- No autorizados -->
+  <div class="col-12" id="no-autorizados">
+    <div class="card shadow-sm">
+      <div class="card-header">No autorizados
+        <span class="ds-caption fw-normal">— marcaciones rechazadas en el terminal, con el motivo</span>
+      </div>
+      <div class="table-responsive"><table class="table table-sm mb-0">
+        <thead><tr>
+          <th>Fecha</th><th>Nombre</th><th>Nº empleado / tarjeta</th><th>Empresa</th>
+          {% if not station %}<th>Estación</th>{% endif %}
+          <th>Turno</th><th>Motivo</th>
+        </tr></thead>
+        <tbody>
+          {% for ev in data.no_autorizados_detalle %}
+          <tr>
+            <td class="text-nowrap">{{ ev.event_time|date:"d-m H:i" }}</td>
+            <td>{{ ev.person_name|default:"(desconocido)" }}{% if ev.is_visitor %} <span class="badge bg-info">visita</span>{% endif %}</td>
+            <td>{% if ev.is_visitor and ev.card_no %}{{ ev.card_no }}{% else %}{{ ev.employee_no|default:"—" }}{% endif %}</td>
+            <td>{{ ev.company|default:"—" }}</td>
+            {% if not station %}<td>{{ ev.station.name }}</td>{% endif %}
+            <td>{{ ev.shift.name|default:"—" }}</td>
+            <td>{{ ev.detail|default:"—" }}</td>
+          </tr>
+          {% empty %}<tr><td colspan="{% if station %}6{% else %}7{% endif %}" class="text-muted text-center py-3">Sin marcaciones no autorizadas.</td></tr>{% endfor %}
         </tbody>
       </table></div>
     </div>

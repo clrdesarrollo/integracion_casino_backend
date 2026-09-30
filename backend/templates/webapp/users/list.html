@@ -10,39 +10,10 @@
   </a>
 </div>
 
-<div class="card shadow-sm mb-3">
-  <div class="card-header bg-white fw-semibold"><i class="bi bi-shield-lock"></i> Qué ve cada rol</div>
-  <div class="table-responsive">
-    <table class="table table-sm mb-0 align-middle ds-caption">
-      <thead>
-        <tr>
-          <th>Rol</th><th>Panel</th><th>Monitor en vivo</th>
-          <th>Colaciones de visitas</th><th>Reportería</th><th>Configuración</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td><span class="badge text-bg-primary">Administrador del sistema</span></td>
-          <td>Sí</td><td>Sí</td><td>Sí</td><td>Sí</td><td>Sí</td>
-        </tr>
-        <tr>
-          <td><span class="badge text-bg-info">Gerente de administración</span></td>
-          <td>Sí</td><td>Sí</td><td>Sí</td><td>Sí</td>
-          <td class="text-muted">No</td>
-        </tr>
-        <tr>
-          <td><span class="badge bg-light text-dark border">Personal del casino</span></td>
-          <td class="text-muted">No</td><td>Sí</td><td>Sí</td><td>Sí</td>
-          <td class="text-muted">No</td>
-        </tr>
-      </tbody>
-    </table>
-  </div>
-  <div class="card-body ds-caption pt-2">
-    «Configuración» son turnos y empresas, estaciones y usuarios. Lo que no aparece marcado
-    queda bloqueado: no basta con tener sesión iniciada para entrar a una sección.
-  </div>
-</div>
+<p class="ds-caption text-muted">
+  Lo que cada usuario puede hacer lo define su rol. Los roles se crean y ajustan en
+  <a href="{% url 'webapp:role_list' %}">Roles</a>.
+</p>
 
 <div class="card shadow-sm">
   <div class="table-responsive">
@@ -53,7 +24,7 @@
         <tr>
           <td>{{ u.email }}</td>
           <td>{{ u.full_name }}</td>
-          <td><span class="badge bg-light text-dark">{{ u.get_role_display }}</span></td>
+          <td><span class="badge bg-light text-dark">{{ u.role.name }}</span></td>
           <td>{% if u.is_active %}<i class="bi bi-check-circle-fill text-success"></i>{% else %}<i class="bi bi-x-circle text-muted"></i>{% endif %}</td>
           <td class="text-end">
             <a href="{% url 'webapp:user_edit' u.pk %}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-pencil"></i></a>

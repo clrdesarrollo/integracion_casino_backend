@@ -7,20 +7,22 @@ from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.db.models import Count, Q, Sum
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 
 from django.http import Http404, HttpResponse, JsonResponse
 
 from backend.apps.core.models import (
-    AccessEvent, Person, Shift, ShiftSchedule, Station, StationAPIKey, VisitorCard,
+    AccessEvent, Person, Role, Shift, ShiftSchedule, Station, StationAPIKey, Visit, VisitorCard,
 )
+from backend.apps.core.access import CAPABILITIES
 from backend.apps.realtime.broadcast import active_shifts
 from backend.apps.webapp.permissions import (
-    DENIED_MESSAGE, admin_required, tickets_required,
+    DENIED_MESSAGE, capability_required,
 )
 from backend.apps.webapp.forms import (
-    ShiftOvertimeForm, ShiftScheduleForm, StationForm, UserForm, VisitorCardForm,
+    RoleForm, ShiftOvertimeForm, ShiftScheduleForm, StationForm, UserForm, VisitForm, VisitorCardForm,
 )
 
 User = get_user_model()
@@ -34,7 +36,7 @@ def dashboard(request):
     # Esta es la raíz del sitio, o sea la pantalla de entrada tras iniciar sesión.
     # Quien no tenga el panel entre sus permisos no está "sin autorización": se le
     # lleva a su propia sección de entrada, sin mensaje de error.
-    if not request.user.can_see_dashboard:
+    if not request.user.has_cap('dashboard'):
         home = request.user.home_url_name
         if home is None:
             raise PermissionDenied(DENIED_MESSAGE)
@@ -75,7 +77,7 @@ def dashboard(request):
     return render(request, 'webapp/dashboard.html', context)
 
 
-@tickets_required
+@capability_required('monitor')
 def monitor(request):
     """Monitor de colaciones en vivo (WebSocket): réplica de la pantalla del kiosco."""
     return render(request, 'webapp/monitor.html', {
@@ -83,7 +85,7 @@ def monitor(request):
     })
 
 
-@tickets_required
+@capability_required('monitor')
 def monitor_shifts(request):
     """Estado de turno de cada estación (lo consulta el monitor cada pocos segundos)."""
     return JsonResponse({'shifts': active_shifts()})
@@ -92,7 +94,7 @@ def monitor_shifts(request):
 # =====================================================================
 #  Control de colaciones de visitas (pagos adicionales)
 # =====================================================================
-@tickets_required
+@capability_required('visit_events')
 def visitor_events(request):
     """
     Marcaciones hechas con tarjeta de visita, con la foto tomada al marcar.
@@ -125,8 +127,17 @@ def visitor_events(request):
 
     query = (request.GET.get('q') or '').strip()
     if query:
+        # Prefiltro en la base (el corte a 500 va después): por nombre/nº de tarjeta, por la
+        # etiqueta del inventario o por la visita registrada con esa tarjeta. Como la visita se
+        # resuelve por instante, abajo se afina en memoria una vez adjuntadas las visitas.
+        visit_cards = Visit.objects.filter(
+            Q(visitor_name__icontains=query) | Q(host_name__icontains=query)
+            | Q(host_company__icontains=query),
+        ).values_list('card_no', flat=True)
+        label_cards = VisitorCard.objects.filter(label__icontains=query).values_list('card_no', flat=True)
         events = events.filter(
-            Q(person_name__icontains=query) | Q(card_no__icontains=query),
+            Q(person_name__icontains=query) | Q(card_no__icontains=query)
+            | Q(card_no__in=visit_cards) | Q(card_no__in=label_cards),
         )
 
     events = list(events[:500])
@@ -138,11 +149,22 @@ def visitor_events(request):
     }
     for ev in events:
         ev.card_label = labels.get((ev.station_id, ev.card_no), '')
+    # a quién se le había entregado la tarjeta en ese momento (registro de visitas)
+    Visit.attach_to_events(events)
+    if query:
+        # el buscador también encuentra por la visita registrada (nombre o a quién visitaba)
+        q = query.lower()
+        events = [e for e in events
+                  if q in (e.person_name or '').lower() or q in (e.card_no or '').lower()
+                  or q in (e.card_label or '').lower()
+                  or (e.visit is not None and (
+                      q in e.visit.visitor_name.lower() or q in e.visit.host_display.lower()))]
 
     cobrables = [e for e in events if e.status == AccessEvent.Status.OK]
     por_tarjeta = Counter(
         (e.card_no, e.card_label or e.person_name) for e in cobrables
     ).most_common()
+    sin_registro = sum(1 for e in cobrables if e.visit is None)
 
     context = {
         'events': events,
@@ -158,12 +180,13 @@ def visitor_events(request):
         'total_rechazadas': sum(1 for e in events if e.status == AccessEvent.Status.NO_AUTORIZADO),
         'tarjetas_usadas': len({e.card_no for e in cobrables}),
         'por_tarjeta': por_tarjeta,
+        'sin_registro': sin_registro,
         'truncado': len(events) >= 500,
     }
     return render(request, 'webapp/visitors/events.html', context)
 
 
-@tickets_required
+@capability_required('visit_events')
 def visitor_event_photo(request, pk):
     """Foto tomada al marcar (solo marcaciones de visita)."""
     event = get_object_or_404(AccessEvent, pk=pk, is_visitor=True)
@@ -178,12 +201,165 @@ def visitor_event_photo(request, pk):
 # =====================================================================
 #  Administración de usuarios
 # =====================================================================
-@admin_required
+#  Registro de visitas: entrega de tarjetas
+# =====================================================================
+def _visit_station(request, stations):
+    """Estación elegida (POST `station` / GET `estacion`); con una sola, esa."""
+    raw = request.POST.get('station') if request.method == 'POST' else request.GET.get('estacion')
+    if raw and str(raw).isdigit():
+        for st in stations:
+            if st.pk == int(raw):
+                return st
+    return stations[0] if stations else None
+
+
+def _visit_meal_counts(visits):
+    """Colaciones cobradas (Ok) con la tarjeta mientras estuvo en manos de cada visita."""
+    visits = list(visits)
+    if not visits:
+        return {}
+    events = list(AccessEvent.objects.filter(
+        is_visitor=True, status=AccessEvent.Status.OK,
+        station_id__in={v.station_id for v in visits},
+        card_no__in={v.card_no for v in visits},
+        event_time__gte=min(v.delivered_at for v in visits),
+    ))
+    Visit.attach_to_events(events)
+    return Counter(e.visit.pk for e in events if e.visit is not None)
+
+
+@capability_required('visits')
+def visit_list(request):
+    """
+    Registro de visitas: a quién se entregó cada tarjeta, quién la entregó (el usuario
+    que registra) y a quién venía a ver. Quien registra puede ser cualquiera que vea las
+    colaciones (portería, casino, gerencia): es un trámite de mesón, no configuración.
+    """
+    stations = list(Station.objects.all())
+    station = _visit_station(request, stations)
+    if station is None:
+        messages.warning(request, 'Aún no hay estaciones: crea una y enrola el terminal '
+                                  'antes de registrar visitas.')
+        return render(request, 'webapp/visitors/visits.html', {'stations': stations, 'station': None})
+
+    form = VisitForm(request.POST or None, station=station)
+    if request.method == 'POST' and form.is_valid():
+        visit = form.save(user=request.user)
+        messages.success(
+            request,
+            f'Tarjeta «{visit.card_display}» entregada a {visit.visitor_name}'
+            + (f' (visita a {visit.host_display})' if visit.host_display else '') + '.',
+        )
+        return redirect(f"{reverse('webapp:visit_list')}?estacion={station.pk}")
+
+    today = timezone.localdate()
+    date_from = parse_date(request.GET.get('desde') or '') or today - timedelta(days=30)
+    date_to = parse_date(request.GET.get('hasta') or '') or today
+    if date_from > date_to:
+        date_from, date_to = date_to, date_from
+    tz = timezone.get_current_timezone()
+    dt_from = timezone.make_aware(datetime.combine(date_from, time.min), tz)
+    dt_to = timezone.make_aware(datetime.combine(date_to + timedelta(days=1), time.min), tz)
+
+    open_visits = list(Visit.objects.open().select_related('station').order_by('delivered_at'))
+
+    history = (Visit.objects.filter(delivered_at__gte=dt_from, delivered_at__lt=dt_to)
+               .select_related('station'))
+    if len(stations) > 1 and request.GET.get('estacion'):
+        history = history.filter(station=station)
+    query = (request.GET.get('q') or '').strip()
+    if query:
+        history = history.filter(
+            Q(visitor_name__icontains=query) | Q(visitor_document__icontains=query)
+            | Q(host_name__icontains=query) | Q(host_company__icontains=query)
+            | Q(card_no__icontains=query) | Q(card_label__icontains=query)
+            | Q(delivered_by_name__icontains=query),
+        )
+    history = list(history[:500])
+
+    meals = _visit_meal_counts(open_visits + history)
+    for v in open_visits + history:
+        v.meals = meals.get(v.pk, 0)
+
+    return render(request, 'webapp/visitors/visits.html', {
+        'form': form,
+        'station': station,
+        'stations': stations,
+        'companies': station.known_companies(),
+        'open_visits': open_visits,
+        'history': history,
+        'cards_total': station.visitor_cards.filter(enabled=True).count(),
+        'cards_in_use': sum(1 for v in open_visits if v.station_id == station.pk),
+        'desde': date_from,
+        'hasta': date_to,
+        'q': query,
+        'truncado': len(history) >= 500,
+    })
+
+
+@capability_required('visits')
+def visit_return(request, pk):
+    """La visita devolvió la tarjeta: desde ahora sus colaciones ya no se le atribuyen."""
+    visit = get_object_or_404(Visit, pk=pk)
+    if request.method == 'POST':
+        if visit.is_open:
+            visit.close(user=request.user)
+            messages.success(request, f'Tarjeta «{visit.card_display}» recibida de vuelta '
+                                      f'de {visit.visitor_name}.')
+        else:
+            messages.info(request, 'Esa tarjeta ya estaba devuelta.')
+    return redirect(f"{reverse('webapp:visit_list')}?estacion={visit.station_id}")
+
+
+@capability_required('visit_cards')
+def visit_delete(request, pk):
+    """Borrar un registro equivocado. Solo el administrador: el registro respalda el cobro."""
+    visit = get_object_or_404(Visit, pk=pk)
+    if request.method == 'POST':
+        nombre = visit.visitor_name
+        visit.delete()
+        messages.success(request, f'Registro de visita de {nombre} eliminado.')
+    return redirect(f"{reverse('webapp:visit_list')}?estacion={visit.station_id}")
+
+
+@capability_required('visits')
+def visit_person_suggest(request):
+    """
+    Autocompletado del funcionario visitado: personas de la estación (ficha de HikCentral)
+    cuyo nombre contenga lo escrito, acotadas a la empresa si se indicó.
+    """
+    station_id = request.GET.get('estacion') or ''
+    query = ' '.join((request.GET.get('q') or '').split())
+    company = (request.GET.get('empresa') or '').strip()
+    persons = Person.objects.exclude(user_type='visitor').exclude(name='')
+    if station_id.isdigit():
+        persons = persons.filter(station_id=int(station_id))
+    if company:
+        persons = persons.filter(company__iexact=company)
+    for word in query.split():
+        persons = persons.filter(name__icontains=word)
+    rows = [{'name': p.name, 'company': p.company, 'employee_no': p.employee_no}
+            for p in persons.order_by('name')[:15]]
+    return JsonResponse({'results': rows})
+
+
+@capability_required('visit_cards')
+def visitor_cards_index(request):
+    """Inventario de tarjetas físicas: con una sola estación va directo a su set."""
+    stations = list(Station.objects.all())
+    if len(stations) == 1:
+        return redirect('webapp:visitor_card_list', pk=stations[0].pk)
+    return render(request, 'webapp/visitors/cards_index.html', {'stations': stations})
+
+
+# =====================================================================
+@capability_required('users')
 def user_list(request):
-    return render(request, 'webapp/users/list.html', {'users': User.objects.all()})
+    return render(request, 'webapp/users/list.html',
+                  {'users': User.objects.select_related('role')})
 
 
-@admin_required
+@capability_required('users')
 def user_create(request):
     form = UserForm(request.POST or None)
     if request.method == 'POST' and form.is_valid():
@@ -193,7 +369,7 @@ def user_create(request):
     return render(request, 'webapp/users/form.html', {'form': form, 'is_new': True})
 
 
-@admin_required
+@capability_required('users')
 def user_edit(request, pk):
     user = get_object_or_404(User, pk=pk)
     form = UserForm(request.POST or None, instance=user)
@@ -205,12 +381,15 @@ def user_edit(request, pk):
                   {'form': form, 'is_new': False, 'obj': user})
 
 
-@admin_required
+@capability_required('users')
 def user_delete(request, pk):
     user = get_object_or_404(User, pk=pk)
     if request.method == 'POST':
         if user.pk == request.user.pk:
             messages.error(request, 'No puedes eliminar tu propia cuenta.')
+        elif user.role.is_admin and not (User.objects.filter(role__is_admin=True, is_active=True)
+                                         .exclude(pk=user.pk).exists()):
+            messages.error(request, 'Es el único administrador activo: no se puede eliminar.')
         else:
             user.delete()
             messages.success(request, 'Usuario eliminado.')
@@ -220,15 +399,71 @@ def user_delete(request, pk):
 
 
 # =====================================================================
+#  Roles
+# =====================================================================
+@capability_required('users')
+def role_list(request):
+    roles = Role.objects.annotate(n_users=Count('users'))
+    return render(request, 'webapp/roles/list.html', {'roles': roles, 'capabilities': CAPABILITIES})
+
+
+@capability_required('users')
+def role_create(request):
+    form = RoleForm(request.POST or None)
+    if request.method == 'POST' and form.is_valid():
+        form.save()
+        messages.success(request, 'Rol creado.')
+        return redirect('webapp:role_list')
+    return render(request, 'webapp/roles/form.html',
+                  {'form': form, 'is_new': True, 'capabilities': CAPABILITIES})
+
+
+@capability_required('users')
+def role_edit(request, pk):
+    role = get_object_or_404(Role, pk=pk)
+    form = RoleForm(request.POST or None, instance=role)
+    if request.method == 'POST' and form.is_valid():
+        form.save()
+        messages.success(request, 'Rol actualizado.')
+        return redirect('webapp:role_list')
+    return render(request, 'webapp/roles/form.html',
+                  {'form': form, 'is_new': False, 'obj': role, 'capabilities': CAPABILITIES})
+
+
+@capability_required('users')
+def role_delete(request, pk):
+    role = get_object_or_404(Role, pk=pk)
+    in_use = role.users.count()
+    blocked = None
+    if role.is_system:
+        blocked = 'Los roles de sistema no se pueden eliminar.'
+    elif in_use:
+        blocked = (f'El rol tiene {in_use} usuario(s) asignado(s): '
+                   'reasígnalos a otro rol antes de eliminarlo.')
+    if request.method == 'POST':
+        if blocked:
+            messages.error(request, blocked)
+        else:
+            role.delete()
+            messages.success(request, 'Rol eliminado.')
+        return redirect('webapp:role_list')
+    if blocked:
+        messages.error(request, blocked)
+        return redirect('webapp:role_list')
+    return render(request, 'webapp/confirm_delete.html',
+                  {'obj': role, 'tipo': 'rol', 'volver': 'webapp:role_list'})
+
+
+# =====================================================================
 #  Estaciones y API keys
 # =====================================================================
-@admin_required
+@capability_required('config')
 def station_list(request):
     stations = Station.objects.all()
     return render(request, 'webapp/stations/list.html', {'stations': stations})
 
 
-@admin_required
+@capability_required('config')
 def station_create(request):
     form = StationForm(request.POST or None,
                        initial={'device_id': Station.next_device_id()})
@@ -239,7 +474,7 @@ def station_create(request):
     return render(request, 'webapp/stations/form.html', {'form': form, 'is_new': True})
 
 
-@admin_required
+@capability_required('config')
 def station_detail(request, pk):
     station = get_object_or_404(Station, pk=pk)
     form = StationForm(request.POST or None, instance=station)
@@ -257,7 +492,7 @@ def station_detail(request, pk):
     return render(request, 'webapp/stations/detail.html', context)
 
 
-@admin_required
+@capability_required('config')
 def station_api_key_create(request, pk):
     station = get_object_or_404(Station, pk=pk)
     if request.method == 'POST':
@@ -269,7 +504,7 @@ def station_api_key_create(request, pk):
     return redirect('webapp:station_detail', pk=station.pk)
 
 
-@admin_required
+@capability_required('config')
 def station_api_key_revoke(request, pk, key_id):
     station = get_object_or_404(Station, pk=pk)
     if request.method == 'POST':
@@ -283,7 +518,7 @@ def station_api_key_revoke(request, pk, key_id):
 # =====================================================================
 #  Turnos programados y empresas autorizadas (configuración compartida)
 # =====================================================================
-@admin_required
+@capability_required('config')
 def config_index(request):
     """Punto de entrada del menú: con una sola estación va directo a sus turnos."""
     stations = list(Station.objects.all())
@@ -292,7 +527,7 @@ def config_index(request):
     return render(request, 'webapp/config/index.html', {'stations': stations})
 
 
-@admin_required
+@capability_required('config')
 def schedule_list(request, pk):
     station = get_object_or_404(Station, pk=pk)
     # La prórroga de cierre se edita en esta misma página (es configuración compartida).
@@ -315,7 +550,7 @@ def schedule_list(request, pk):
     })
 
 
-@admin_required
+@capability_required('config')
 def schedule_create(request, pk):
     station = get_object_or_404(Station, pk=pk)
     form = ShiftScheduleForm(request.POST or None, station=station,
@@ -328,7 +563,7 @@ def schedule_create(request, pk):
                   {'station': station, 'form': form, 'is_new': True})
 
 
-@admin_required
+@capability_required('config')
 def schedule_edit(request, pk, sid):
     station = get_object_or_404(Station, pk=pk)
     schedule = get_object_or_404(ShiftSchedule, pk=sid, station=station)
@@ -341,7 +576,7 @@ def schedule_edit(request, pk, sid):
                   {'station': station, 'form': form, 'is_new': False, 'obj': schedule})
 
 
-@admin_required
+@capability_required('config')
 def schedule_delete(request, pk, sid):
     station = get_object_or_404(Station, pk=pk)
     schedule = get_object_or_404(ShiftSchedule, pk=sid, station=station)
@@ -360,7 +595,7 @@ def schedule_delete(request, pk, sid):
 # =====================================================================
 #  Personas y colación asignada (solo lectura: la administra HikCentral)
 # =====================================================================
-@admin_required
+@capability_required('config')
 def person_list(request, pk):
     """
     Ficha de personas de la estación con la colación asignada en HikCentral (campo
@@ -403,7 +638,7 @@ def person_list(request, pk):
 # =====================================================================
 #  Tarjetas RFID de visitas
 # =====================================================================
-@admin_required
+@capability_required('visit_cards')
 def visitor_card_list(request, pk):
     station = get_object_or_404(Station, pk=pk)
     form = VisitorCardForm(request.POST or None)
@@ -428,7 +663,7 @@ def visitor_card_list(request, pk):
     })
 
 
-@admin_required
+@capability_required('visit_cards')
 def visitor_card_toggle(request, pk, cid):
     station = get_object_or_404(Station, pk=pk)
     card = get_object_or_404(VisitorCard, pk=cid, station=station)
@@ -441,7 +676,7 @@ def visitor_card_toggle(request, pk, cid):
     return redirect('webapp:visitor_card_list', pk=station.pk)
 
 
-@admin_required
+@capability_required('visit_cards')
 def visitor_card_delete(request, pk, cid):
     station = get_object_or_404(Station, pk=pk)
     card = get_object_or_404(VisitorCard, pk=cid, station=station)

@@ -1,0 +1,56 @@
+{% extends 'base.html' %}
+{% block title %}Roles · Casino Backoffice{% endblock %}
+{% block nav_roles %}active{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h1 class="page-title">Roles</h1>
+  <a href="{% url 'webapp:role_create' %}" class="btn btn-primary btn-sm">
+    <i class="bi bi-plus-lg"></i> Nuevo rol
+  </a>
+</div>
+
+<p class="ds-caption text-muted">
+  Un rol es un conjunto de permisos que se asigna a los usuarios. Estar autenticado no da
+  acceso a nada por sí solo: lo que no está marcado queda bloqueado.
+</p>
+
+<div class="card shadow-sm">
+  <div class="table-responsive">
+    <table class="table table-hover mb-0 align-middle ds-caption">
+      <thead>
+        <tr>
+          <th>Rol</th><th class="text-center">Usuarios</th>
+          {% for c in capabilities %}<th class="text-center" title="{{ c.help }}">{{ c.label }}</th>{% endfor %}
+          <th class="text-end">Acciones</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in roles %}
+        <tr>
+          <td>
+            <span class="fw-semibold">{{ r.name }}</span>
+            {% if r.is_admin %}<span class="badge text-bg-primary">acceso total</span>
+            {% elif r.is_system %}<span class="badge bg-light text-dark border">de sistema</span>{% endif %}
+            {% if r.description %}<div class="text-muted">{{ r.description }}</div>{% endif %}
+          </td>
+          <td class="text-center">{{ r.n_users }}</td>
+          {% for c in capabilities %}
+          <td class="text-center">
+            {% if c.code in r.permissions or r.is_admin %}<i class="bi bi-check-circle-fill text-success"></i>
+            {% else %}<i class="bi bi-dash text-muted"></i>{% endif %}
+          </td>
+          {% endfor %}
+          <td class="text-end text-nowrap">
+            <a href="{% url 'webapp:role_edit' r.pk %}" class="btn btn-sm btn-outline-secondary" title="Editar"><i class="bi bi-pencil"></i></a>
+            {% if not r.is_system %}
+            <a href="{% url 'webapp:role_delete' r.pk %}" class="btn btn-sm btn-outline-danger" title="Eliminar"><i class="bi bi-trash"></i></a>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

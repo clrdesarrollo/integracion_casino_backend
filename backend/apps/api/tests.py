@@ -11,7 +11,7 @@ from django.utils.dateparse import parse_datetime
 from rest_framework.test import APIClient
 
 from backend.apps.core.models import (
-    AccessEvent, Person, Shift, ShiftSchedule, Station, StationAPIKey, VisitorCard,
+    AccessEvent, Person, Role, Shift, ShiftSchedule, Station, StationAPIKey, VisitorCard,
 )
 
 
@@ -368,6 +368,25 @@ class ShiftOvertimeConfigTests(TestCase):
         flags = {s['uid']: s['manual_entry'] for s in body['config']['schedules']}
         self.assertEqual(flags, {'sc-once': True, 'sc-alm': False})
 
+    def test_upgraded_terminal_without_stamp_gets_manual_entry(self):
+        """
+        Kiosco recién actualizado: su versión anterior ignoró manual_entry y quedó con la
+        misma marca que el servidor. La app nueva borra su marca una vez al arrancar: el
+        servidor debe devolverle su copia (con manual_entry) y NO pisarla con la del kiosco.
+        """
+        ShiftSchedule.objects.create(station=self.station, uid='sc-once', name='Once',
+                                     start_min=900, end_min=1320, manual_entry=True)
+        self.station.touch_config()
+        body = self._sync({'config': {
+            'updated_at': '',
+            'schedules': [{'remote_id': 1, 'uid': 'sc-once', 'name': 'Once', 'start_min': 900,
+                           'end_min': 1320, 'enabled': True, 'manual_entry': False,
+                           'all_companies': True, 'allow_visitors': True, 'companies': []}],
+            'visitor_cards': [],
+        }})
+        self.assertEqual(body['config']['schedules'][0]['manual_entry'], True)
+        self.assertTrue(ShiftSchedule.objects.get(station=self.station, uid='sc-once').manual_entry)
+
     def test_person_meal_policy_survives_sync(self):
         """La colación asignada (campo Colacion de HikCentral) se respalda por persona."""
         self._sync({'persons': [
@@ -402,7 +421,7 @@ class VisitorEventsViewTests(TestCase):
         User = get_user_model()
         # personal del casino: es el rol con el acceso más acotado que igual ve los tickets
         self.user = User.objects.create_user(
-            email='v@v.cl', password='x', first_name='V', last_name='V', role='casino',
+            email='v@v.cl', password='x', first_name='V', last_name='V', role=Role.objects.get(code='casino'),
         )
         self.station = Station.objects.create(name='Casino 1', device_id=1000)
         self.client.force_login(self.user)
@@ -418,7 +437,7 @@ class VisitorEventsViewTests(TestCase):
         )
 
     def test_lists_only_visitor_events(self):
-        resp = self.client.get('/visitas/')
+        resp = self.client.get('/visitas/colaciones/')
         self.assertContains(resp, 'Visita 01')
         self.assertNotContains(resp, '>Ana<')
 
@@ -438,13 +457,13 @@ class VisitorEventsViewTests(TestCase):
             person_name='Visita 02', card_no='002', event_time=timezone.now(),
             status=AccessEvent.Status.DUPLICADO, is_visitor=True,
         )
-        resp = self.client.get('/visitas/?estado=Duplicado')
+        resp = self.client.get('/visitas/colaciones/?estado=Duplicado')
         self.assertContains(resp, 'Visita 02')
         self.assertNotContains(resp, 'Visita 01')
 
     def test_login_required(self):
         self.client.logout()
-        resp = self.client.get('/visitas/')
+        resp = self.client.get('/visitas/colaciones/')
         self.assertEqual(resp.status_code, 302)
 
 
@@ -452,7 +471,7 @@ class ConfigWebTests(TestCase):
     def setUp(self):
         from django.contrib.auth import get_user_model
         User = get_user_model()
-        self.admin = User.objects.create_user(email='a@a.cl', password='x', first_name='A', last_name='B', role='admin')
+        self.admin = User.objects.create_user(email='a@a.cl', password='x', first_name='A', last_name='B', role=Role.objects.get(code='admin'))
         self.station = Station.objects.create(name='Casino 1', device_id=1000)
         self.client.force_login(self.admin)
 

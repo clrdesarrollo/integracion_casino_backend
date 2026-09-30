@@ -5,7 +5,7 @@ from django.shortcuts import render
 from django.utils import timezone
 
 from backend.apps.core.models import Shift, Station
-from backend.apps.webapp.permissions import tickets_required
+from backend.apps.webapp.permissions import capability_required
 from backend.apps.reports.excel import build_excel
 from backend.apps.reports.pdf import build_pdf
 from backend.apps.reports.service import build_report
@@ -81,7 +81,7 @@ def _shift_names(station=None):
                   key=lambda s: s.upper())
 
 
-@tickets_required
+@capability_required('reports')
 def report_view(request):
     d_from, d_to, dt_from, dt_to, station, shift_name = _resolve_params(request)
     data = build_report(dt_from, dt_to, station=station, shift_name=shift_name)
@@ -99,7 +99,7 @@ def report_view(request):
     return render(request, 'reports/report.html', context)
 
 
-@tickets_required
+@capability_required('reports')
 def report_pdf(request):
     d_from, d_to, dt_from, dt_to, station, shift_name = _resolve_params(request)
     data = build_report(dt_from, dt_to, station=station, shift_name=shift_name)
@@ -111,7 +111,7 @@ def report_pdf(request):
     return resp
 
 
-@tickets_required
+@capability_required('reports')
 def report_excel(request):
     d_from, d_to, dt_from, dt_to, station, shift_name = _resolve_params(request)
     data = build_report(dt_from, dt_to, station=station, shift_name=shift_name)

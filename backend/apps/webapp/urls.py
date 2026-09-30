@@ -9,15 +9,27 @@ urlpatterns = [
     path('monitor/', views.monitor, name='monitor'),
     path('monitor/turnos/', views.monitor_shifts, name='monitor_shifts'),
 
-    # Colaciones de visitas (pagos adicionales): control con foto
-    path('visitas/', views.visitor_events, name='visitor_events'),
+    # Visitas: registro de entrega de tarjetas, colaciones (pagos adicionales) con foto,
+    # e inventario de tarjetas físicas (solo administrador)
+    path('visitas/', views.visit_list, name='visit_list'),
+    path('visitas/<int:pk>/devolver/', views.visit_return, name='visit_return'),
+    path('visitas/<int:pk>/eliminar/', views.visit_delete, name='visit_delete'),
+    path('visitas/funcionarios/', views.visit_person_suggest, name='visit_person_suggest'),
+    path('visitas/colaciones/', views.visitor_events, name='visitor_events'),
     path('visitas/<int:pk>/foto/', views.visitor_event_photo, name='visitor_event_photo'),
+    path('visitas/tarjetas/', views.visitor_cards_index, name='visitor_cards_index'),
 
     # Usuarios
     path('usuarios/', views.user_list, name='user_list'),
     path('usuarios/nuevo/', views.user_create, name='user_create'),
     path('usuarios/<int:pk>/editar/', views.user_edit, name='user_edit'),
     path('usuarios/<int:pk>/eliminar/', views.user_delete, name='user_delete'),
+
+    # Roles (qué puede hacer cada tipo de usuario)
+    path('roles/', views.role_list, name='role_list'),
+    path('roles/nuevo/', views.role_create, name='role_create'),
+    path('roles/<int:pk>/editar/', views.role_edit, name='role_edit'),
+    path('roles/<int:pk>/eliminar/', views.role_delete, name='role_delete'),
 
     # Estaciones
     path('estaciones/', views.station_list, name='station_list'),
@@ -35,7 +47,7 @@ urlpatterns = [
     path('estaciones/<int:pk>/turnos/<int:sid>/', views.schedule_edit, name='schedule_edit'),
     path('estaciones/<int:pk>/turnos/<int:sid>/eliminar/', views.schedule_delete, name='schedule_delete'),
 
-    # Tarjetas RFID de visitas
+    # Inventario de tarjetas RFID de visitas (por estación; se llega desde Visitas → Tarjetas)
     path('estaciones/<int:pk>/tarjetas/', views.visitor_card_list, name='visitor_card_list'),
     path('estaciones/<int:pk>/tarjetas/<int:cid>/alternar/', views.visitor_card_toggle, name='visitor_card_toggle'),
     path('estaciones/<int:pk>/tarjetas/<int:cid>/eliminar/', views.visitor_card_delete, name='visitor_card_delete'),

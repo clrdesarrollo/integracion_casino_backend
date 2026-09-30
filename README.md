@@ -135,47 +135,75 @@ Respuesta:
 
 ## Roles y accesos
 
-El backoffice tiene tres roles. **Estar autenticado no da acceso a nada por sí solo**: cada
-vista exige una capacidad y lo que no está permitido se niega.
+Los roles se crean y editan desde el propio backoffice (menú **Roles**, requiere el permiso
+«Usuarios y roles»). Un rol es un conjunto de permisos; a cada usuario se le asigna uno.
+**Estar autenticado no da acceso a nada por sí solo**: cada vista exige un permiso y lo que no
+está marcado se niega.
 
-| Rol | Panel | Monitor en vivo | Colaciones de visitas | Reportería | Configuración |
-|---|---|---|---|---|---|
-| **Administrador del sistema** (`admin`) | Sí | Sí | Sí | Sí | Sí |
-| **Gerente de administración** (`gerente`) | Sí | Sí | Sí | Sí | No |
-| **Personal del casino** (`casino`) | No | Sí | Sí | Sí | No |
+Permisos disponibles (catálogo en `backend/apps/core/access.py`):
 
-«Configuración» son turnos y empresas, estaciones (con sus API keys) y usuarios. El panel
-`/admin/` de Django queda solo para el administrador: `is_staff` lo deriva `User.save()` del
-rol, así que bajarle el rol a alguien le cierra también esa puerta.
+| Permiso | Da acceso a |
+|---|---|
+| Panel | resumen de la operación |
+| Monitor en vivo | monitor y su WebSocket |
+| Reportería | informes y descargas PDF/Excel |
+| Registro de visitas | entregar y recibir tarjetas de visita |
+| Colaciones de visitas | marcaciones con tarjeta de visita y su foto |
+| Administrar visitas | eliminar registros de visita e inventario de tarjetas |
+| Turnos, empresas y estaciones | configuración compartida con el kiosco, estaciones y API keys |
+| Usuarios y roles | alta de usuarios y definición de roles |
 
-Detalles de implementación (`backend/apps/webapp/permissions.py`):
+Vienen tres roles de sistema (se pueden ajustar, no eliminar): **Administrador del sistema**
+(`admin`, acceso total y fijo), **Gerente de administración** (`gerente`) y **Personal del
+casino** (`casino`, el rol de partida de un usuario nuevo por ser el más restringido).
 
-- Las capacidades se declaran una sola vez (`is_admin`, `can_see_tickets`,
-  `can_see_dashboard` en `User`) y los decoradores `admin_required` / `tickets_required`
-  las aplican. El menú lateral se dibuja con las mismas propiedades, así que no se ofrece
-  lo que la vista va a rechazar.
-- Al negar se redirige a la sección de entrada del propio usuario, nunca a una página que
-  tampoco pueda ver (eso haría un bucle). Un rol sin ninguna sección permitida recibe 403.
-- La raíz `/` es el panel y actúa de entrada: al personal del casino lo lleva al monitor sin
-  mostrarle un error de permisos.
-- El WebSocket del monitor exige el mismo permiso que la página: por ahí viajan las mismas
-  marcaciones, así que pedir solo sesión sería una puerta de atrás.
-- El `next` del login se valida contra el propio host, para que un enlace preparado no saque
-  al usuario del backoffice justo después de escribir su contraseña.
+Reglas:
 
-La matriz completa está cubierta por pruebas en `backend/apps/webapp/tests.py`: recorren
-todas las rutas para los tres roles, de modo que una vista nueva sin proteger se detecta al
-sumarla a la lista.
+- El administrador siempre tiene todos los permisos y es el único rol con acceso al panel
+  `/admin` de Django (`is_staff` lo deriva `User.save()` del rol). No se puede dejar al sistema
+  sin un administrador activo (ni quitándole el rol, ni desactivándolo, ni eliminándolo).
+- Un rol con usuarios asignados no se puede eliminar.
+- Los decoradores son `capability_required('<permiso>')` (`webapp/permissions.py`); el menú
+  lateral usa `user.caps.<permiso>`, así que no se ofrece lo que la vista va a rechazar.
+  Para sumar una sección: declarar el permiso en `core/access.py` y protegerla con el decorador;
+  el formulario de roles lo ofrece solo.
+- Al negar se redirige a la primera sección que el usuario sí puede ver, nunca a una página que
+  tampoco pueda ver (haría un bucle). Un rol sin ningún permiso recibe 403.
+- El WebSocket del monitor exige el mismo permiso que la página y lo revalida durante la conexión.
+- El `next` del login se valida contra el propio host.
 
-Los roles antiguos `operator` y `viewer` desaparecieron; la migración `0008` pasa a sus
-usuarios a `casino`, el más restringido.
+Las pruebas (`backend/apps/webapp/tests.py`) recorren todas las rutas por rol y cubren los roles
+personalizados. Los roles antiguos `operator` y `viewer` desaparecieron (migración `0008`); la
+`0012`–`0014` pasan el rol de texto a la tabla de roles sin tocar a los usuarios.
 
 ---
 
-## Colaciones de visitas
+## Visitas
 
-Las colaciones que retiran las visitas con tarjeta RFID **se facturan aparte**, así que
-tienen su propia pantalla de control (menú **Colaciones de visitas**, `/visitas/`).
+El menú **Visitas** (`/visitas/`) reúne todo lo de las tarjetas de visita en tres pestañas.
+
+**Registro de visitas** (`/visitas/`, los tres roles): a quién se entrega cada tarjeta física,
+quién la entrega (el usuario que registra) y a quién viene a ver, eligiendo empresa y funcionario
+(autocompletado por nombre desde la ficha de personas sincronizada de HikCentral; si el nombre
+no coincide se guarda igual como texto). Las colaciones que se retiren con esa tarjeta se
+atribuyen a la visita **hasta que se registre la devolución**; si se vuelve a entregar una
+tarjeta «en uso», la visita anterior se cierra sola en ese momento. El registro vive en
+`tb_visit` y guarda la tarjeta por número (el set se reemplaza completo al sincronizar con el
+terminal) y el nombre del funcionario en texto (la ficha puede desaparecer al resincronizar).
+Solo el administrador puede borrar un registro equivocado.
+
+**Tarjetas** (`/visitas/tarjetas/`, solo administrador): el inventario de tarjetas físicas por
+estación. Es la lista con la que el terminal reconoce que una tarjeta es de visita (foto,
+insignia VISITA, una colación por tarjeta por turno, facturación aparte). **No habilita la
+tarjeta en el control de acceso**: quien la lee es el equipo Hikvision, así que además debe
+estar dada de alta en HikCentral con su nivel de acceso. Una tarjeta que el equipo acepta pero
+no está en el inventario se cuenta como colación de la persona a la que HikCentral se la
+asignó, no como visita.
+
+**Colaciones** (`/visitas/colaciones/`): las colaciones que retiran las visitas con tarjeta RFID
+**se facturan aparte**, así que tienen su propia pantalla de control. Junto a cada marcación se
+muestra a quién se le había entregado la tarjeta en ese momento; si nadie registró la entrega
+aparece como «sin registro» (se cobra igual).
 
 Cada marcación se muestra con la **foto que el terminal tomó al momento de retirar** —la
 constancia de quién comió—, la tarjeta usada, el turno (marcado si fue una reapertura), la
@@ -188,6 +216,11 @@ facturarla.
 
 Las fotos se sirven en `/visitas/<id>/foto/`, solo para marcaciones de visita y solo a
 usuarios autenticados.
+
+En la **reportería** (pantalla, PDF y Excel) hay una sección **Visitas** con cada visita del
+período —entregada, visita, a quién venía a ver, tarjeta, quién la entregó, devolución y
+colaciones retiradas— más las tarjetas usadas sin registro; en el detalle por persona la visita
+registrada figura con su nombre.
 
 ---
 
@@ -210,12 +243,12 @@ En **Reportería** eliges rango de fechas y estación (o todas). El informe repl
 el PDF de la app C#:
 
 - **Resumen**: colaciones servidas, personas distintas, intentos duplicados,
-  no autorizados, fuera de turno sin asociar.
+  no autorizados, fuera de turno.
 - **Por día**, **por turno**, **por empresa** y **detalle por persona**.
 
-"Colaciones servidas" = marcaciones `Ok` **más** las `SinTurno` atribuidas a un turno
-mediante la ventana de gracia (`REPORT_GRACE_MINUTES`, por defecto 15 min — debe
-coincidir con la app). Botones **PDF** y **Excel** para descargar.
+"Colaciones servidas" = marcaciones `Ok` **más** las de ingreso manual. Las marcaciones
+fuera de turno (`SinTurno`) no suman: el kiosco las rechaza y no se sirve colación.
+Botones **PDF** y **Excel** para descargar.
 
 Para el cierre de mes: entra con el rango del primer al último día del mes; el título
 del informe se rotula automáticamente como "Informe mensual — <mes> <año>".

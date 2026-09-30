@@ -31,8 +31,9 @@ class MonitorConsumer(AsyncWebsocketConsumer):
         if user is None or not user.is_authenticated or not user.is_active:
             await self.close(code=4401)   # sin sesión válida
             return
-        if not user.can_see_tickets:
-            await self.close(code=4403)   # autenticado, pero su rol no ve colaciones
+        # el rol es una relación: se lee en un hilo de base de datos, no en el bucle async
+        if not await self._puede_ver_monitor(user.pk):
+            await self.close(code=4403)   # autenticado, pero su rol no ve el monitor
             return
 
         self._checked_at = time.monotonic()   # recién validado: no repetir en el primer evento
@@ -68,14 +69,14 @@ class MonitorConsumer(AsyncWebsocketConsumer):
         if ahora - self._checked_at < self.REVALIDATE_SECONDS:
             return True
         self._checked_at = ahora
-        return await self._puede_ver_tickets(self.scope['user'].pk)
+        return await self._puede_ver_monitor(self.scope['user'].pk)
 
     @database_sync_to_async
-    def _puede_ver_tickets(self, user_id):
+    def _puede_ver_monitor(self, user_id):
         from django.contrib.auth import get_user_model
 
-        user = get_user_model().objects.filter(pk=user_id).first()
-        return bool(user and user.is_active and user.can_see_tickets)
+        user = get_user_model().objects.select_related('role').filter(pk=user_id).first()
+        return bool(user and user.is_active and user.has_cap('monitor'))
 
     # ---- Acceso a datos ----
     @database_sync_to_async

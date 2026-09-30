@@ -4,8 +4,8 @@ from django.contrib.auth.forms import UserCreationForm, UserChangeForm
 from rest_framework_api_key.admin import APIKeyModelAdmin
 
 from backend.apps.core.models import (
-    User, Station, StationAPIKey, Person, Shift, AccessEvent,
-    ShiftSchedule, ShiftScheduleCompany, VisitorCard,
+    Role, User, Station, StationAPIKey, Person, Shift, AccessEvent,
+    ShiftSchedule, ShiftScheduleCompany, Visit, VisitorCard,
 )
 
 
@@ -21,6 +21,12 @@ class UserChangeFormEmail(UserChangeForm):
         fields = '__all__'
 
 
+@admin.register(Role)
+class RoleAdmin(admin.ModelAdmin):
+    list_display = ('name', 'code', 'is_admin', 'is_system')
+    readonly_fields = ('code', 'is_admin', 'is_system')
+
+
 @admin.register(User)
 class UserAdmin(BaseUserAdmin):
     add_form = UserCreationFormEmail
@@ -29,6 +35,7 @@ class UserAdmin(BaseUserAdmin):
 
     list_display = ('email', 'first_name', 'last_name', 'role', 'is_active', 'is_staff')
     list_filter = ('role', 'is_active', 'is_staff')
+    list_select_related = ('role',)
     # el rol define el acceso al backoffice: conviene verlo al listar y poder filtrarlo
     search_fields = ('email', 'first_name', 'last_name')
     ordering = ('email',)
@@ -108,3 +115,14 @@ class VisitorCardAdmin(admin.ModelAdmin):
     list_display = ('card_no', 'label', 'station', 'enabled', 'created_at')
     list_filter = ('station', 'enabled')
     search_fields = ('card_no', 'label')
+
+
+@admin.register(Visit)
+class VisitAdmin(admin.ModelAdmin):
+    list_display = ('delivered_at', 'visitor_name', 'card_no', 'card_label', 'host_name',
+                    'host_company', 'delivered_by_name', 'returned_at', 'station')
+    list_filter = ('station', 'host_company')
+    search_fields = ('visitor_name', 'visitor_document', 'host_name', 'host_company',
+                     'card_no', 'card_label', 'delivered_by_name')
+    date_hierarchy = 'delivered_at'
+    raw_id_fields = ('host_person', 'delivered_by', 'returned_by')
