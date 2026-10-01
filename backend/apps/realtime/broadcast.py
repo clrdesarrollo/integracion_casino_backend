@@ -6,6 +6,28 @@ from django.utils import timezone
 MONITOR_GROUP = 'monitor'
 
 
+def station_group(station_id) -> str:
+    """Grupo del canal de órdenes hacia el terminal de una estación."""
+    return f'station_{station_id}'
+
+
+def send_station_command(station_id, command: str) -> None:
+    """
+    Envía una orden al terminal por su WebSocket (`/ws/station/`). Nunca lanza: si el
+    terminal no está conectado o el canal (Redis) no responde, la orden simplemente no
+    llega por aquí y el terminal la recoge en su próxima sincronización HTTP.
+    """
+    layer = get_channel_layer()
+    if layer is None:
+        return
+    try:
+        async_to_sync(layer.group_send)(station_group(station_id), {
+            'type': 'station.command', 'command': command,
+        })
+    except Exception:
+        pass
+
+
 def active_shifts() -> list:
     """
     Turno abierto de cada estación (el que no tiene término). El kiosco no puede operar

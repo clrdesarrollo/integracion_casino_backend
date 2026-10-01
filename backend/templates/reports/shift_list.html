@@ -1,0 +1,72 @@
+{% extends 'base.html' %}
+{% block title %}Detalle de turnos · Casino{% endblock %}
+{% block nav_shifts %}active{% endblock %}
+
+{% block content %}
+<h1 class="page-title mb-3">Detalle de turnos</h1>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <form method="get" class="row g-2 align-items-end">
+      <div class="col-md-3">
+        <label class="form-label">Desde</label>
+        <input type="date" name="from" value="{{ d_from|date:'Y-m-d' }}" class="form-control">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Hasta</label>
+        <input type="date" name="to" value="{{ d_to|date:'Y-m-d' }}" class="form-control">
+      </div>
+      <div class="col-md-2">
+        <label class="form-label">Estación</label>
+        <select name="station" class="form-select">
+          <option value="">Todas</option>
+          {% for s in stations %}
+          <option value="{{ s.pk }}" {% if station and station.pk == s.pk %}selected{% endif %}>{{ s.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label">Turno</label>
+        <select name="shift" class="form-select">
+          <option value="">Todos</option>
+          {% for n in shift_names %}
+          <option value="{{ n }}" {% if shift_name == n %}selected{% endif %}>{{ n }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-2">
+        <button type="submit" class="btn btn-primary w-100"><i class="bi bi-funnel"></i> Filtrar</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-header">Turnos del {{ d_from|date:"d-m-Y" }} al {{ d_to|date:"d-m-Y" }}
+    <span class="ds-caption fw-normal">— una fila por apertura. Junto a cada hora: si fue automática (por horario) o manual (desde la pantalla del terminal).</span>
+  </div>
+  <div class="table-responsive"><table class="table table-hover table-sm mb-0 align-middle">
+    <thead><tr>
+      <th>Turno</th><th>Estación</th><th>Inicio</th><th>Término</th><th>Duración</th>
+      <th class="text-end">Colaciones</th><th class="text-end">Duplicados</th><th class="text-end">No autorizados</th><th></th>
+    </tr></thead>
+    <tbody>
+      {% for s in shifts %}
+      <tr>
+        <td class="fw-semibold"><a href="{% url 'reports:shift_detail' s.pk %}">{{ s.name }}</a></td>
+        <td>{{ s.station.name }}</td>
+        <td class="text-nowrap">{% include "reports/_shift_start.html" with shift=s fmt="d-m-Y H:i:s" %}</td>
+        <td class="text-nowrap">{% include "reports/_shift_end.html" with shift=s fmt="d-m-Y H:i:s" %}</td>
+        <td class="text-nowrap">{% if s.is_manual_entry %}—{% else %}{{ s.duration_text }}{% endif %}</td>
+        <td class="text-end fw-semibold">{% if s.is_manual_entry %}{{ s.manual_count }}{% else %}{{ s.n_ok }}{% endif %}</td>
+        <td class="text-end">{{ s.n_dup }}</td>
+        <td class="text-end">{{ s.n_denied }}</td>
+        <td class="text-end"><a href="{% url 'reports:shift_detail' s.pk %}" class="btn btn-sm btn-outline-secondary">Ver detalle</a></td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="9" class="text-muted text-center py-3">Sin turnos en el período.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+</div>
+{% endblock %}

@@ -6,8 +6,9 @@
 {% with tab='visits' %}{% include 'webapp/visitors/_tabs.html' %}{% endwith %}
 <p class="ds-caption mb-3">
   Cada tarjeta física de visita se entrega a una persona concreta. Aquí queda a quién se le entregó,
-  quién la entregó (el usuario que registra) y a quién venía a ver. Las colaciones que retire con esa
-  tarjeta se le atribuyen hasta que se registre la devolución.
+  quién la entregó (el usuario que registra) y a quién venía a ver. La entrega <strong>carga la tarjeta con
+  una sola colación</strong>, para el día y el turno que se elijan: al leerla en el terminal queda utilizada y
+  no vuelve a servir hasta registrar una nueva entrega.
 </p>
 
 {% if station %}
@@ -62,6 +63,17 @@
               {% if not cards_total %}<span class="text-danger">No hay tarjetas habilitadas en el inventario.</span>{% endif %}
             </div>
           </div>
+          <div class="ds-micro-cap text-muted mb-1">Colación que autoriza (una sola)</div>
+          <div class="row g-2 mb-3">
+            <div class="col-5">
+              <label class="form-label">{{ form.meal_date.label }}</label>{{ form.meal_date }}
+              {% for e in form.meal_date.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+            </div>
+            <div class="col-7">
+              <label class="form-label">{{ form.meal_shift.label }}</label>{{ form.meal_shift }}
+              {% for e in form.meal_shift.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+            </div>
+          </div>
           <div class="mb-3"><label class="form-label">{{ form.notes.label }}</label>{{ form.notes }}</div>
 
           <button type="submit" class="btn btn-primary" {% if not cards_total %}disabled{% endif %}>
@@ -75,10 +87,10 @@
     <div class="card shadow-sm mt-3 border-primary-subtle">
       <div class="card-body ds-caption">
         <p class="mb-1"><strong>Cómo funciona:</strong> la tarjeta debe estar en el inventario de
-        <em>Tarjetas</em> y además dada de alta en HikCentral con su nivel de acceso, porque quien la lee
-        es el control de acceso. Este registro no habilita la tarjeta: dice <strong>a quién se le entregó</strong>.</p>
+        <em>Tarjetas</em>. Registrar la entrega es lo que la <strong>habilita</strong>: una tarjeta sin entrega
+        registrada, ya utilizada, o presentada en otro día o turno, queda rechazada en el terminal.</p>
         <p class="mb-0">Si se vuelve a entregar una tarjeta que sigue «en uso», la visita anterior se cierra sola
-        en ese momento.</p>
+        en ese momento y su colación sin usar deja de valer.</p>
       </div>
     </div>
   </div>
@@ -92,7 +104,7 @@
         <table class="table table-hover align-middle mb-0">
           <thead><tr>
             <th>Tarjeta</th><th>Visita</th><th>Viene a ver a</th><th>Entregada</th>
-            <th class="text-end">Colaciones</th><th class="text-end">Acciones</th>
+            <th>Colación</th><th class="text-end">Acciones</th>
           </tr></thead>
           <tbody>
             {% for v in open_visits %}
@@ -103,7 +115,14 @@
                 {% if v.visitor_document or v.visitor_company %}<div class="ds-micro text-muted">{{ v.visitor_document }}{% if v.visitor_document and v.visitor_company %} · {% endif %}{{ v.visitor_company }}</div>{% endif %}</td>
               <td>{{ v.host_display|default:"—" }}</td>
               <td class="ds-caption">{{ v.delivered_at|date:"d-m-Y H:i" }}<div class="ds-micro text-muted">por {{ v.delivered_by_name|default:"—" }}</div></td>
-              <td class="text-end fw-semibold">{{ v.meals }}</td>
+              <td class="ds-caption">{% if v.meal_text %}{{ v.meal_text }}{% endif %}
+                <div>
+                {% if v.meal_state == 'used' %}<span class="badge bg-success" title="El terminal leyó la tarjeta y entregó la colación">Utilizada {{ v.used_at|date:"d-m H:i" }}</span>{% if v.used_shift_name %} <span class="ds-micro text-muted">{{ v.used_shift_name }}</span>{% endif %}
+                {% elif v.meal_state == 'pending' %}<span class="badge bg-warning" title="La tarjeta aún no se ha leído en el terminal">Sin usar</span>
+                {% elif v.meal_state == 'expired' %}<span class="badge bg-secondary" title="No se usó: se devolvió la tarjeta o pasó el día">No utilizada</span>
+                {% else %}<span class="ds-micro text-muted">registro anterior</span>{% endif %}
+                {% if v.origin == 'totem' %}<span class="badge bg-info" title="Carga de respaldo hecha en el terminal, sin registro de la visita">terminal</span>{% endif %}
+                </div></td>
               <td class="text-end text-nowrap">
                 <form method="post" action="{% url 'webapp:visit_return' v.pk %}" class="d-inline">{% csrf_token %}
                   <button class="btn btn-sm btn-outline-primary" type="submit" title="La visita devolvió la tarjeta"><i class="bi bi-box-arrow-in-left"></i> Devolver</button>
@@ -134,7 +153,7 @@
         <table class="table table-hover align-middle mb-0">
           <thead><tr>
             <th>Entregada</th><th>Visita</th><th>Viene a ver a</th><th>Tarjeta</th><th>Entregó</th><th>Devuelta</th>
-            <th class="text-end">Colaciones</th>{% if user.caps.visit_cards %}<th></th>{% endif %}
+            <th>Colación</th>{% if user.caps.visit_cards %}<th></th>{% endif %}
           </tr></thead>
           <tbody>
             {% for v in history %}
@@ -150,7 +169,14 @@
                 {% if v.returned_at %}{{ v.returned_at|date:"d-m-Y H:i" }}<div class="ds-micro text-muted">{{ v.returned_by_name }}</div>
                 {% else %}<span class="badge text-bg-warning">en uso</span>{% endif %}
               </td>
-              <td class="text-end fw-semibold">{{ v.meals }}</td>
+              <td class="ds-caption">{% if v.meal_text %}{{ v.meal_text }}{% endif %}
+                <div>
+                {% if v.meal_state == 'used' %}<span class="badge bg-success" title="El terminal leyó la tarjeta y entregó la colación">Utilizada {{ v.used_at|date:"d-m H:i" }}</span>{% if v.used_shift_name %} <span class="ds-micro text-muted">{{ v.used_shift_name }}</span>{% endif %}
+                {% elif v.meal_state == 'pending' %}<span class="badge bg-warning" title="La tarjeta aún no se ha leído en el terminal">Sin usar</span>
+                {% elif v.meal_state == 'expired' %}<span class="badge bg-secondary" title="No se usó: se devolvió la tarjeta o pasó el día">No utilizada</span>
+                {% else %}<span class="ds-micro text-muted">registro anterior</span>{% endif %}
+                {% if v.origin == 'totem' %}<span class="badge bg-info" title="Carga de respaldo hecha en el terminal, sin registro de la visita">terminal</span>{% endif %}
+                </div></td>
               {% if user.caps.visit_cards %}
               <td class="text-end">
                 <form method="post" action="{% url 'webapp:visit_delete' v.pk %}" class="d-inline"

@@ -48,6 +48,8 @@
   .form-select-dark { background:var(--ds-dark-surface); color:var(--ds-dark-text); border-color:var(--ds-dark-hairline); }
   .form-select-dark:focus { background:var(--ds-dark-surface); color:var(--ds-dark-text); border-color:var(--ds-primary-soft); box-shadow:none; }
   .mon-hint { color:var(--ds-dark-mute); font-size:13px; letter-spacing:-.39px; }
+  .mon-search { width:280px; max-width:55%; }
+  .mon-search::placeholder { color:var(--ds-dark-mute); }
 
   /* ---- Tarjeta grande, una por fila: la misma anatomía que la card del kiosco ---- */
   .mon-list { padding:var(--ds-space-lg) var(--ds-space-xl) var(--ds-space-xl); display:flex; flex-direction:column; gap:var(--ds-space-lg); }
@@ -119,11 +121,12 @@
       <option value="">Todas las estaciones</option>
       {% for s in stations %}<option value="{{ s.pk }}">{{ s.name }}</option>{% endfor %}
     </select>
-    <span class="mon-hint">Misma vista que el kiosco: la marcación más reciente arriba.</span>
+    <input id="searchBox" type="search" class="form-control form-control-sm form-select-dark mon-search"
+           placeholder="Buscar por nombre, empresa o nº" autocomplete="off" aria-label="Buscar en la lista">
   </div>
 
   <div id="grid" class="mon-list"></div>
-  <div id="empty" class="mon-empty"><i class="bi bi-hourglass-split"></i> Esperando marcaciones…</div>
+  <div id="empty" class="mon-empty" style="display:none"></div>
 </div>
 
 <script>
@@ -179,14 +182,49 @@
     document.getElementById('cVis').textContent = counts.visitas;
   }
 
-  function applyFilter(card) {
-    const f = stationFilter.value;
-    card.style.display = (!f || card.dataset.station === f) ? '' : 'none';
+  // Buscador: compara sin tildes ni mayúsculas contra nombre, empresa y nº de la tarjeta.
+  const searchBox = document.getElementById('searchBox');
+  function fold(s) {
+    return (s || '').toString().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   }
+  function searchWords() { return fold(searchBox.value).split(/\s+/).filter(Boolean); }
+
+  function applyFilter(card, words) {
+    const f = stationFilter.value;
+    words = words || searchWords();
+    const hay = card.dataset.search || '';
+    const match = words.every(function (w) { return hay.indexOf(w) !== -1; });
+    card.style.display = ((!f || card.dataset.station === f) && match) ? '' : 'none';
+  }
+
+  let anyActive = false;   // hay algún turno abierto (en las estaciones del filtro)
+
+  // Mensaje bajo la lista: esperando marcaciones (solo con turno abierto) o búsqueda sin
+  // resultados. Sin turno no se muestra nada: la franja de turnos ya lo dice.
+  function updateEmpty() {
+    const visible = Array.prototype.some.call(grid.children, function (c) { return c.style.display !== 'none'; });
+    if (visible) { emptyEl.style.display = 'none'; return; }
+    if (grid.children.length && (searchWords().length || stationFilter.value)) {
+      emptyEl.innerHTML = '<i class="bi bi-search"></i> Ninguna marcación coincide con el filtro.';
+      emptyEl.style.display = '';
+    } else if (anyActive) {
+      emptyEl.innerHTML = '<i class="bi bi-hourglass-split"></i> Esperando marcaciones…';
+      emptyEl.style.display = '';
+    } else {
+      emptyEl.style.display = 'none';
+    }
+  }
+
+  function refilter() {
+    const words = searchWords();
+    Array.prototype.forEach.call(grid.children, function (c) { applyFilter(c, words); });
+    updateEmpty();
+  }
+  searchBox.addEventListener('input', refilter);
 
   function clearList() {
     grid.innerHTML = '';
-    emptyEl.style.display = '';
+    updateEmpty();
   }
 
   function addCard(ev, prepend) {
@@ -197,6 +235,7 @@
     card.className = 'mon-card';
     card.style.borderColor = (ev.status === 'Duplicado') ? CSSVAR('--ds-dark-warning') : CSSVAR('--ds-dark-hairline');
     card.dataset.station = ev.station_id != null ? String(ev.station_id) : '';
+    card.dataset.search = fold([ev.person_name, ev.company, ev.employee_no].join(' '));
     card.innerHTML =
       '<div class="mon-bar" style="background:' + st.fg + '"></div>' +
       // la foto de la ficha tapa las iniciales; si no carga se quita y quedan las iniciales
@@ -224,7 +263,7 @@
     else grid.appendChild(card);
 
     while (grid.children.length > MAX) grid.removeChild(grid.lastChild);
-    emptyEl.style.display = grid.children.length ? 'none' : '';
+    updateEmpty();
   }
 
   function bumpCount(status, isVisitor) {
@@ -252,12 +291,8 @@
     if (shiftKey !== null && shiftKey !== key) clearList();
     shiftKey = key;
 
-    const anyActive = rows.some(function (s) { return s.active; });
-    emptyEl.innerHTML = anyActive
-      ? '<i class="bi bi-hourglass-split"></i> Esperando marcaciones…'
-      : '<i class="bi bi-exclamation-triangle"></i> <strong>Sin turno iniciado</strong>' +
-        '<div class="small mt-1">El kiosco no está registrando colaciones. Las marcaciones que lleguen se descartan.</div>';
-    emptyEl.style.display = grid.children.length ? 'none' : '';
+    anyActive = rows.some(function (s) { return s.active; });
+    updateEmpty();
 
     if (!rows.length) { shiftBar.innerHTML = '<span class="text-secondary small">Sin estaciones registradas.</span>'; return; }
     shiftBar.innerHTML = rows.map(function (s) {
@@ -281,7 +316,7 @@
   setInterval(loadShifts, 15000);
 
   stationFilter.addEventListener('change', function () {
-    Array.prototype.forEach.call(grid.children, applyFilter);
+    refilter();
     renderShifts();
   });
 
@@ -331,7 +366,7 @@
           counts.visitas = m.counts.visitas || 0;
           renderCounts();
         }
-        emptyEl.style.display = grid.children.length ? 'none' : '';
+        updateEmpty();
       } else if (m.type === 'event') {
         addCard(m.event, true);
         bumpCount(m.event.status, m.event.is_visitor);

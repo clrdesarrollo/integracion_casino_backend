@@ -306,6 +306,7 @@ def visit_return(request, pk):
     if request.method == 'POST':
         if visit.is_open:
             visit.close(user=request.user)
+            visit.station.notify_card_grants_changed()   # la carga sin usar deja de valer
             messages.success(request, f'Tarjeta «{visit.card_display}» recibida de vuelta '
                                       f'de {visit.visitor_name}.')
         else:
@@ -319,7 +320,9 @@ def visit_delete(request, pk):
     visit = get_object_or_404(Visit, pk=pk)
     if request.method == 'POST':
         nombre = visit.visitor_name
+        station = visit.station
         visit.delete()
+        station.notify_card_grants_changed()
         messages.success(request, f'Registro de visita de {nombre} eliminado.')
     return redirect(f"{reverse('webapp:visit_list')}?estacion={visit.station_id}")
 
@@ -635,6 +638,21 @@ def person_list(request, pk):
         'counts': counts,
         'policies': Person.MealPolicy.choices,
     })
+
+
+@capability_required('config')
+def person_refresh(request, pk):
+    """
+    Botón «Actualizar desde HikCentral»: le pide al terminal que vuelva a leer las personas
+    y las suba. Si el terminal está conectado (WebSocket) lo hace en segundos; si no, la
+    solicitud queda pendiente y la recoge en su próxima sincronización.
+    """
+    station = get_object_or_404(Station, pk=pk)
+    if request.method == 'POST':
+        station.request_persons_refresh()
+        messages.info(request, 'Actualización solicitada al terminal. La lista se refresca sola '
+                               'cuando el terminal termine de leer HikCentral.')
+    return redirect('webapp:person_list', pk=station.pk)
 
 
 @login_required

@@ -15,7 +15,7 @@ from backend.apps.api.permissions import HasStationAPIKey
 from backend.apps.api.serializers import EnrollSerializer, SyncSerializer
 from backend.apps.core.config_sync import reconcile
 from backend.apps.core.models import (
-    AccessEvent, Person, PersonPhoto, Shift, Station, StationAPIKey,
+    AccessEvent, Person, PersonPhoto, Shift, Station, StationAPIKey, Visit,
 )
 from backend.apps.realtime.broadcast import broadcast_events
 
@@ -196,6 +196,24 @@ class SyncView(APIView):
                 elif p.get('photo_hash') and p['photo_hash'].lower() != person.photo_hash:
                     photos_needed.append(person.employee_no)
 
+            # Bajas: el terminal mandó su lista completa, así que quien ya no viene fue
+            # eliminado de HikCentral. Las marcaciones guardan su propia copia del nombre y
+            # no se tocan. Una lista vacía no se toma como «borrar a todos».
+            if data['persons_complete'] and data['persons']:
+                gone = station.persons.exclude(
+                    employee_no__in=[p['employee_no'] for p in data['persons']])
+                result['persons']['deleted'] = gone.count()
+                gone.delete()
+
+            # El terminal leyó HikCentral: queda la hora; y si lo hizo por la orden del
+            # backoffice, la solicitud se da por atendida.
+            if data.get('persons_refreshed_at') is not None:
+                station.persons_refreshed_at = data['persons_refreshed_at']
+                station.save(update_fields=['persons_refreshed_at'])
+            if data['persons_refresh_ack'] and station.persons_refresh_requested_at is not None:
+                station.persons_refresh_requested_at = None
+                station.save(update_fields=['persons_refresh_requested_at'])
+
             for s in data['shifts']:
                 # El uid es la clave estable (sobrevive a que se recree la base del
                 # terminal); un terminal antiguo no lo manda y se cae al remote_id.
@@ -259,6 +277,11 @@ class SyncView(APIView):
                 if created:
                     created_events.append(obj)
 
+            # Tarjetas de visita de un solo uso: primero las cargas creadas en el terminal
+            # (deben existir antes de marcarlas) y luego las que ya se gastaron.
+            Visit.register_totem_grants(station, data['card_grants_local'])
+            Visit.mark_used(station, data['card_grants_used'])
+
             # Configuración compartida (turnos/empresas autorizadas/tarjetas de visita):
             # gana la edición más reciente. Si la del servidor es más nueva, se devuelve.
             config_out = None
@@ -278,4 +301,9 @@ class SyncView(APIView):
             body['config'] = config_out
         if photos_needed:
             body['photos_needed'] = photos_needed
+        # Cargas vigentes de las tarjetas de visita: van SIEMPRE, el terminal las reemplaza
+        body['card_grants'] = Visit.grants_for(station)
+        # Órdenes pendientes para el terminal (respaldo del WebSocket /ws/station/)
+        if station.persons_refresh_requested_at is not None:
+            body['commands'] = ['sync_persons']
         return Response(body, status=status.HTTP_200_OK)

@@ -472,6 +472,14 @@ h1, h2, h3, h4, h5, h6 { color: var(--ds-ink); }
   vertical-align: middle;
 }
 
+/* 10px de aire a cada lado en toda tabla (reportes, listados): el contenido de la
+   primera y la última columna no queda pegado al borde de la tarjeta. Va en las celdas
+   y no en el contenedor, para que la banda del encabezado siga de borde a borde. */
+.table > :not(caption) > * > :first-child { padding-left: calc(.5rem + 10px); }
+.table > :not(caption) > * > :last-child  { padding-right: calc(.5rem + 10px); }
+.table-sm > :not(caption) > * > :first-child { padding-left: calc(.25rem + 10px); }
+.table-sm > :not(caption) > * > :last-child  { padding-right: calc(.25rem + 10px); }
+
 /* --------------------------------------------------------------------------
    8. Formularios — radio 6px, borde hairline-input, foco rojo de marca
    -------------------------------------------------------------------------- */

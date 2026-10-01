@@ -1,0 +1,7 @@
+{# Hora de término de un turno + cómo se cerró. Espera `shift`; `fmt` = formato de la hora. #}
+{% if shift.is_manual_entry %}<span class="badge bg-info">ingreso manual</span>
+{% elif shift.ended_at %}{{ shift.ended_at|date:fmt }}
+  {% if shift.end_mode == 'auto' %}<span class="badge bg-light ms-1" title="{{ shift.get_end_reason_display }}">automático</span>
+  {% elif shift.end_mode == 'manual' %}<span class="badge bg-warning ms-1" title="El operador lo terminó desde la pantalla del terminal">manual</span>
+  {% elif shift.end_mode == 'interrumpido' %}<span class="badge bg-danger ms-1" title="El terminal estaba caído cuando debía cerrarse">interrumpido</span>{% endif %}
+{% else %}<span class="badge bg-success">en curso</span>{% endif %}

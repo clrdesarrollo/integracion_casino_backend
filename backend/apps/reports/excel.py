@@ -50,7 +50,6 @@ def build_excel(data: ReportData, titulo: str) -> bytes:
         ('Visitas (tarjeta)', data.visitas),
         ('Ingreso manual', data.manuales),
         ('No autorizados', data.no_autorizados),
-        ('Fuera de turno', data.sin_turno),
     ]
     for i, (label, val) in enumerate(resumen, start=row + 1):
         ws.write(i, 0, label, f_cell)
@@ -79,10 +78,14 @@ def build_excel(data: ReportData, titulo: str) -> bytes:
     for r in data.por_turno:
         s = r.shift
         fin = 'ingreso manual' if s.is_manual_entry else (_local_str(s.ended_at) or 'en curso')
-        turno_rows.append((s.name, _local_str(s.started_at), fin,
+        # cómo se abrió y se cerró: por horario (auto) o desde la pantalla del terminal (manual)
+        modo_ini = '' if s.is_manual_entry else s.start_mode
+        modo_fin = '' if s.is_manual_entry else s.end_mode
+        turno_rows.append((s.name, _local_str(s.started_at), modo_ini, fin, modo_fin,
                            r.en_turno, r.manuales, r.total))
     sheet_table('Por turno',
-                ['Turno', 'Inicio', 'Término', 'En turno', 'Manual', 'Total'],
+                ['Turno', 'Inicio', 'Modo inicio', 'Término', 'Modo término',
+                 'En turno', 'Manual', 'Total'],
                 turno_rows)
 
     # ---- Por empresa (con composición por turno) ----
@@ -137,6 +140,59 @@ def build_excel(data: ReportData, titulo: str) -> bytes:
                      for e in data.no_autorizados_detalle])
     w.set_column(0, 0, 17)
     w.set_column(7, 7, 60)
+
+    wb.close()
+    return buf.getvalue()
+
+
+def build_shift_excel(shift, events) -> bytes:
+    """Detalle de UN turno: cómo se abrió y cerró, y cada marcación con su hora al segundo."""
+    buf = io.BytesIO()
+    wb = xlsxwriter.Workbook(buf, {'in_memory': True})
+    f_title = wb.add_format({'bold': True, 'font_size': 16, 'font_color': '#C8102E'})
+    f_h = wb.add_format({'bold': True, 'bg_color': '#F2F2F4', 'border': 1})
+    f_cell = wb.add_format({'border': 1})
+    f_num = wb.add_format({'border': 1, 'align': 'right'})
+
+    ws = wb.add_worksheet('Turno')
+    ws.set_column('A:A', 28)
+    ws.set_column('B:B', 34)
+    hora = '%d-%m-%Y %H:%M:%S'
+    ws.write('A1', f'Turno {shift.name}', f_title)
+    ficha = [
+        ('Estación', shift.station.name),
+        ('Día de servicio', f'{shift.service_date:%d-%m-%Y}' if shift.service_date else ''),
+        ('Inicio', _local_str(shift.started_at, hora)),
+        ('Modo de inicio', '' if shift.is_manual_entry else shift.start_mode),
+        ('Término', _local_str(shift.ended_at, hora) or 'en curso'),
+        ('Modo de término', '' if shift.is_manual_entry else shift.end_mode),
+        ('Motivo de término', shift.get_end_reason_display()),
+        ('Reapertura', 'sí' if shift.is_reopening else 'no'),
+    ]
+    if shift.is_manual_entry:
+        ficha.append(('Colaciones (ingreso manual)', shift.manual_count))
+    else:
+        ficha.append(('Colaciones válidas', sum(1 for e in events if e.status == 'Ok')))
+        ficha.append(('Marcaciones', len(events)))
+    for i, (label, value) in enumerate(ficha, start=2):
+        ws.write(i, 0, label, f_h)
+        if isinstance(value, int):
+            ws.write_number(i, 1, value, f_num)
+        else:
+            ws.write(i, 1, value, f_cell)
+
+    w = wb.add_worksheet('Marcaciones')
+    headers = ['Fecha', 'Hora', 'Persona', 'Nº', 'Empresa', 'Método', 'Estado', 'Visita', 'Detalle']
+    for c, h in enumerate(headers):
+        w.write(0, c, h, f_h)
+    for c, width in enumerate([12, 10, 34, 14, 26, 16, 20, 8, 60]):
+        w.set_column(c, c, width)
+    for r, e in enumerate(events, start=1):
+        row = [_local_str(e.event_time, '%d-%m-%Y'), _local_str(e.event_time, '%H:%M:%S'),
+               e.person_name or e.employee_no, e.employee_no, e.company, e.verify_method,
+               e.get_status_display(), 'sí' if e.is_visitor else '', e.detail or '']
+        for c, value in enumerate(row):
+            w.write(r, c, value, f_cell)
 
     wb.close()
     return buf.getvalue()

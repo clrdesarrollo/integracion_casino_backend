@@ -1,4 +1,5 @@
 import uuid
+from datetime import timedelta
 
 from django.contrib.auth.hashers import check_password, make_password
 from django.contrib.auth.models import PermissionsMixin
@@ -204,6 +205,14 @@ class Station(models.Model):
                   'sin esperar esta prórroga.',
     )
 
+    # Personas: cuándo el terminal leyó por última vez la lista de HikCentral, y si desde
+    # el backoffice se le pidió volver a leerla (botón «Actualizar desde HikCentral»). La
+    # solicitud queda pendiente hasta que el terminal confirma una lectura posterior.
+    persons_refreshed_at = models.DateTimeField(
+        'personas leídas de HikCentral', blank=True, null=True)
+    persons_refresh_requested_at = models.DateTimeField(
+        'actualización de personas solicitada', blank=True, null=True)
+
     class Meta:
         db_table = 'tb_station'
         verbose_name = 'estación'
@@ -235,6 +244,21 @@ class Station(models.Model):
         # precisión de milisegundos: es la que viaja en la sincronización con el terminal
         self.config_updated_at = now.replace(microsecond=(now.microsecond // 1000) * 1000)
         self.save(update_fields=['config_updated_at'])
+        # el terminal conectado la viene a buscar ahora, sin esperar su próxima sincronización
+        from backend.apps.realtime.broadcast import send_station_command
+        send_station_command(self.pk, 'sync')
+
+    def notify_card_grants_changed(self):
+        """Se cargó, devolvió o eliminó una tarjeta de visita: el terminal la recoge ahora."""
+        from backend.apps.realtime.broadcast import send_station_command
+        send_station_command(self.pk, 'sync_grants')
+
+    def request_persons_refresh(self):
+        """Pide al terminal que vuelva a leer las personas de HikCentral y las suba."""
+        self.persons_refresh_requested_at = timezone.now()
+        self.save(update_fields=['persons_refresh_requested_at'])
+        from backend.apps.realtime.broadcast import send_station_command
+        send_station_command(self.pk, 'sync_persons')
 
     def known_companies(self):
         """Empresas distintas en la ficha de personas de la estación ('' = sin empresa)."""
@@ -445,6 +469,27 @@ class Shift(models.Model):
     @property
     def is_manual_entry(self):
         return self.manual_count is not None
+
+    @property
+    def start_mode(self):
+        """Cómo se abrió: 'auto' (el planificador, por horario) o 'manual' (el operador)."""
+        return 'auto' if self.auto else 'manual'
+
+    @property
+    def end_mode(self):
+        """
+        Cómo se cerró: 'manual' (el operador), 'auto' (por horario: lo reemplazó el turno
+        siguiente o venció la prórroga) o 'interrumpido' (terminal caído). '' si sigue en
+        curso o lo respaldó un terminal antiguo, que no informaba el motivo.
+        """
+        if not self.ended_at:
+            return ''
+        return {
+            self.EndReason.MANUAL: 'manual',
+            self.EndReason.REPLACED: 'auto',
+            self.EndReason.EXPIRED: 'auto',
+            self.EndReason.INTERRUPTED: 'interrumpido',
+        }.get(self.end_reason, '')
 
     @property
     def duration_text(self):
@@ -745,6 +790,19 @@ class Visit(models.Model):
     notes = models.CharField('observación', max_length=300, blank=True)
     created_at = models.DateTimeField('creada', auto_now_add=True)
 
+    # --- colación autorizada: la entrega «carga» la tarjeta con UNA colación ---
+    # Identidad de la carga, compartida con el terminal (que la marca como usada).
+    uid = models.CharField('uid', max_length=40, default=new_uid, db_index=True)
+    # Día y turno para los que vale. Sin turno (uid vacío) = cualquier turno de ese día.
+    meal_date = models.DateField('día de la colación', blank=True, null=True)
+    meal_schedule_uid = models.CharField('uid del turno autorizado', max_length=40, blank=True, default='')
+    meal_shift_name = models.CharField('turno autorizado', max_length=120, blank=True, default='')
+    # Cuándo el terminal leyó la tarjeta y entregó la colación (la carga queda gastada).
+    used_at = models.DateTimeField('utilizada el', blank=True, null=True)
+    used_shift_name = models.CharField('turno en que se utilizó', max_length=120, blank=True, default='')
+    # 'backoffice' = registrada en el mesón; 'totem' = carga de respaldo hecha en el terminal.
+    origin = models.CharField('origen', max_length=20, default='backoffice')
+
     objects = VisitQuerySet.as_manager()
 
     class Meta:
@@ -775,6 +833,73 @@ class Visit(models.Model):
         if name and company:
             return f'{name} ({company})'
         return name or company
+
+    @property
+    def meal_text(self):
+        """«Almuerzo · 02-10-2026», «Cualquier turno · 02-10-2026» o vacío (registro antiguo)."""
+        if not self.meal_date:
+            return ''
+        return f"{self.meal_shift_name or 'Cualquier turno'} · {self.meal_date:%d-%m-%Y}"
+
+    @property
+    def meal_state(self):
+        """'used', 'pending', 'expired' o '' (registro anterior a las tarjetas de un solo uso)."""
+        if self.used_at:
+            return 'used'
+        if not self.meal_date:
+            return ''
+        if self.returned_at is not None or self.meal_date < timezone.localdate():
+            return 'expired'
+        return 'pending'
+
+    @classmethod
+    def grants_for(cls, station):
+        """
+        Cargas vigentes de las tarjetas de la estación, tal como las necesita el terminal:
+        las de tarjetas aún entregadas, de hoy en adelante (y ayer, por el turno que cruza
+        la medianoche). Las ya usadas también van, para que el terminal diga «ya utilizada».
+        """
+        since = timezone.localdate() - timedelta(days=1)
+        rows = cls.objects.open().filter(station=station, meal_date__gte=since).order_by('delivered_at')
+        return [{
+            'uid': v.uid,
+            'card_no': v.card_no,
+            'meal_date': v.meal_date.isoformat(),
+            'schedule_uid': v.meal_schedule_uid,
+            'shift_name': v.meal_shift_name,
+            'visitor_name': v.visitor_name,
+            'used': v.used_at is not None,
+        } for v in rows]
+
+    @classmethod
+    def register_totem_grants(cls, station, items):
+        """
+        Cargas de respaldo hechas en el terminal (sin conexión con el backoffice): se
+        registran como una entrega sin datos de la visita, para que el uso quede a la vista.
+        """
+        for g in items:
+            if cls.objects.filter(station=station, uid=g['uid']).exists():
+                continue
+            card_no = VisitorCard.normalize(g['card_no'])
+            card = station.visitor_cards.filter(card_no=card_no).first()
+            when = g.get('created_at') or timezone.now()
+            for previous in cls.objects.open().filter(station=station, card_no=card_no):
+                previous.close(when=when)
+            cls.objects.create(
+                station=station, uid=g['uid'], card_no=card_no,
+                card_label=card.label if card else '',
+                visitor_name='(Carga hecha en el terminal)',
+                delivered_by_name='Terminal', delivered_at=when,
+                meal_date=g['meal_date'], origin='totem',
+                notes='Carga de respaldo desde el terminal, sin registro de la visita.',
+            )
+
+    @classmethod
+    def mark_used(cls, station, items):
+        """El terminal entregó la colación de estas cargas: quedan gastadas (idempotente)."""
+        for g in items:
+            cls.objects.filter(station=station, uid=g['uid'], used_at__isnull=True).update(
+                used_at=g['used_at'], used_shift_name=g.get('shift_name') or '')
 
     def covers(self, when):
         """La tarjeta estaba en manos de esta visita en el instante `when`."""
