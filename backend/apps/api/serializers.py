@@ -142,10 +142,42 @@ class ConfigSyncSerializer(serializers.Serializer):
     )
 
 
+class CardGrantUsedSerializer(serializers.Serializer):
+    """Carga de tarjeta de visita que el terminal ya gastó (entregó la colación)."""
+
+    uid = serializers.CharField(max_length=40)
+    used_at = serializers.DateTimeField(input_formats=DATETIME_INPUT_FORMATS)
+    shift_name = serializers.CharField(max_length=120, allow_blank=True, required=False, default='')
+
+
+class CardGrantLocalSerializer(serializers.Serializer):
+    """Carga de respaldo creada en el terminal (cuando no había conexión con el backoffice)."""
+
+    uid = serializers.CharField(max_length=40)
+    card_no = serializers.CharField(max_length=100)
+    meal_date = serializers.DateField()
+    created_at = serializers.DateTimeField(
+        input_formats=DATETIME_INPUT_FORMATS, required=False, allow_null=True, default=None,
+    )
+
+
 class SyncSerializer(serializers.Serializer):
     """Payload de sincronización que sube la estación (todo es opcional)."""
 
     persons = PersonSyncSerializer(many=True, required=False, default=list)
+    # true = `persons` es la lista COMPLETA del terminal: lo que no venga se elimina aquí.
+    # Un terminal antiguo no lo manda y nunca borra nada.
+    persons_complete = serializers.BooleanField(required=False, default=False)
+    # Cuándo leyó el terminal la lista de HikCentral, si lo hizo desde su último respaldo.
+    persons_refreshed_at = serializers.DateTimeField(
+        input_formats=DATETIME_INPUT_FORMATS, required=False, allow_null=True, default=None,
+    )
+    # true = esa lectura se hizo por la orden «sync_persons» del backoffice: la da por atendida.
+    # (No se compara por hora: el reloj del terminal puede no coincidir con el del servidor.)
+    persons_refresh_ack = serializers.BooleanField(required=False, default=False)
+    # Tarjetas de visita de un solo uso: cargas hechas en el terminal y cargas ya gastadas.
+    card_grants_local = CardGrantLocalSerializer(many=True, required=False, default=list)
+    card_grants_used = CardGrantUsedSerializer(many=True, required=False, default=list)
     shifts = ShiftSyncSerializer(many=True, required=False, default=list)
     events = EventSyncSerializer(many=True, required=False, default=list)
     config = ConfigSyncSerializer(required=False, allow_null=True)

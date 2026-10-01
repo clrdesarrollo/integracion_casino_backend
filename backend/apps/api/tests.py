@@ -160,6 +160,23 @@ class ShiftIdentityTests(TestCase):
         self.assertTrue(reopened.is_reopening)
         self.assertEqual(reopened.reopened_from_uid, original.uid)
 
+    def test_shift_start_and_end_mode(self):
+        """El reporte indica si el turno se abrió/cerró por horario o desde la pantalla."""
+        fin = '2026-08-17T14:00:00'
+        self._sync({'shifts': [
+            self._shift('m-m', remote_id=1, auto=False, ended_at=fin, end_reason='manual'),
+            self._shift('a-r', remote_id=2, auto=True, ended_at=fin, end_reason='reemplazado'),
+            self._shift('a-e', remote_id=3, auto=True, ended_at=fin, end_reason='expirado'),
+            self._shift('m-i', remote_id=4, auto=False, ended_at=fin, end_reason='interrumpido'),
+            self._shift('viejo', remote_id=5, auto=False, ended_at=fin),   # terminal antiguo
+            self._shift('abierto', remote_id=6, auto=True),
+        ]})
+        modes = {s.uid: (s.start_mode, s.end_mode) for s in Shift.objects.all()}
+        self.assertEqual(modes, {
+            'm-m': ('manual', 'manual'), 'a-r': ('auto', 'auto'), 'a-e': ('auto', 'auto'),
+            'm-i': ('manual', 'interrumpido'), 'viejo': ('manual', ''), 'abierto': ('auto', ''),
+        })
+
     def test_legacy_row_adopts_uid_instead_of_duplicating(self):
         """Un turno respaldado antes de los uid lo adopta al reenviarse (no se duplica)."""
         legacy = Shift.objects.create(
@@ -446,6 +463,93 @@ class ShiftOvertimeConfigTests(TestCase):
         # 4) cambió la foto en HikCentral: hash distinto → se vuelve a pedir
         body = self._sync({'persons': [{**base, 'photo_hash': 'a' * 40}]})
         self.assertEqual(body['photos_needed'], ['1-9'])
+
+    def test_persons_complete_removes_the_missing_ones(self):
+        """Lista completa del terminal: quien ya no viene (baja en HikCentral) se elimina."""
+        todos = [{'employee_no': n, 'name': n} for n in ('1-9', '2-7', '3-5')]
+        self._sync({'persons': todos})
+        # sin la marca (terminal antiguo, o envío parcial de fotos) no se borra a nadie
+        self._sync({'persons': todos[:1]})
+        self.assertEqual(Person.objects.filter(station=self.station).count(), 3)
+        # una lista vacía tampoco se toma como «borrar a todos»
+        self._sync({'persons': [], 'persons_complete': True})
+        self.assertEqual(Person.objects.filter(station=self.station).count(), 3)
+
+        otra = Station.objects.create(name='Otra', device_id=2000)
+        Person.objects.create(station=otra, employee_no='3-5', name='De otra estación')
+        AccessEvent.objects.create(station=self.station, remote_id=1, uid='e1', employee_no='3-5',
+                                   person_name='3-5', event_time=timezone.now(), status='Ok')
+
+        body = self._sync({'persons': todos[:2], 'persons_complete': True})
+        self.assertEqual(body['result']['persons']['deleted'], 1)
+        self.assertEqual(sorted(Person.objects.filter(station=self.station)
+                                .values_list('employee_no', flat=True)), ['1-9', '2-7'])
+        self.assertTrue(Person.objects.filter(station=otra, employee_no='3-5').exists())
+        self.assertTrue(AccessEvent.objects.filter(uid='e1').exists())   # la marcación queda
+
+    def test_persons_refresh_request_reaches_the_terminal(self):
+        """El botón del backoffice deja una orden que el terminal recibe y luego confirma."""
+        self.assertNotIn('commands', self._sync({}))
+        self.station.request_persons_refresh()
+        self.assertEqual(self._sync({})['commands'], ['sync_persons'])
+
+        # una lectura de HikCentral que NO responde a la orden deja la hora pero no la atiende
+        body = self._sync({'persons_refreshed_at': '2026-08-17T12:00:00'})
+        self.assertEqual(body['commands'], ['sync_persons'])
+        self.station.refresh_from_db()
+        self.assertIsNotNone(self.station.persons_refreshed_at)
+
+        # el terminal leyó HikCentral por la orden: solicitud atendida
+        body = self._sync({'persons_refreshed_at': '2026-08-17T12:05:00', 'persons_refresh_ack': True})
+        self.assertNotIn('commands', body)
+        self.station.refresh_from_db()
+        self.assertIsNone(self.station.persons_refresh_requested_at)
+
+    def test_card_grants_travel_to_the_terminal_and_come_back_used(self):
+        """Tarjetas de un solo uso: la carga baja al terminal y vuelve como utilizada."""
+        from backend.apps.core.models import Visit
+        hoy = timezone.localdate()
+        VisitorCard.objects.create(station=self.station, card_no='002', label='Visita 02')
+        visit = Visit.objects.create(
+            station=self.station, card_no='002', visitor_name='Juanito', meal_date=hoy,
+            meal_schedule_uid='sc-alm', meal_shift_name='Almuerzo')
+        # de otro día ya pasado y de una tarjeta devuelta: no bajan
+        Visit.objects.create(station=self.station, card_no='003', visitor_name='Vieja',
+                             meal_date=hoy - timedelta(days=3))
+        Visit.objects.create(station=self.station, card_no='004', visitor_name='Devuelta',
+                             meal_date=hoy, returned_at=timezone.now())
+
+        body = self._sync({})
+        self.assertEqual([(g['uid'], g['card_no'], g['shift_name'], g['used']) for g in body['card_grants']],
+                         [(visit.uid, '002', 'Almuerzo', False)])
+
+        # el terminal leyó la tarjeta: la carga vuelve gastada (y reenviarla no cambia la hora)
+        usada = {'uid': visit.uid, 'used_at': '2026-08-17T12:30:15', 'shift_name': 'Almuerzo'}
+        body = self._sync({'card_grants_used': [usada]})
+        self.assertTrue(body['card_grants'][0]['used'])
+        self._sync({'card_grants_used': [{**usada, 'used_at': '2026-08-17T13:00:00'}]})
+        visit.refresh_from_db()
+        self.assertEqual(visit.meal_state, 'used')
+        self.assertEqual(timezone.localtime(visit.used_at).strftime('%H:%M:%S'), '12:30:15')
+        self.assertEqual(visit.used_shift_name, 'Almuerzo')
+
+    def test_grant_made_on_the_terminal_is_registered(self):
+        """Carga de respaldo hecha en el terminal sin conexión: queda como entrega sin visita."""
+        from backend.apps.core.models import Visit
+        hoy = timezone.localdate().isoformat()
+        VisitorCard.objects.create(station=self.station, card_no='002', label='Visita 02')
+        anterior = Visit.objects.create(station=self.station, card_no='002', visitor_name='Anterior',
+                                        meal_date=timezone.localdate())
+        local = {'uid': 'totem-1', 'card_no': '002', 'meal_date': hoy, 'created_at': '2026-08-17T12:00:00'}
+        body = self._sync({'card_grants_local': [local],
+                           'card_grants_used': [{'uid': 'totem-1', 'used_at': '2026-08-17T12:01:00'}]})
+        self._sync({'card_grants_local': [local]})      # reenviada: no se duplica
+        v = Visit.objects.get(uid='totem-1')
+        self.assertEqual((v.origin, v.card_label, v.meal_state), ('totem', 'Visita 02', 'used'))
+        self.assertEqual(Visit.objects.filter(uid='totem-1').count(), 1)
+        anterior.refresh_from_db()
+        self.assertFalse(anterior.is_open)              # la tarjeta pasó a la nueva carga
+        self.assertEqual([g['uid'] for g in body['card_grants']], ['totem-1'])
 
     def test_person_photo_view_and_event_urls(self):
         """La foto se sirve con sesión iniciada y las marcaciones llevan su URL."""

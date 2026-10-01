@@ -10,9 +10,29 @@
 </style>
 {% with tab='persons' %}{% include 'webapp/config/_station_tabs.html' %}{% endwith %}
 
-<div class="d-flex justify-content-between align-items-center mb-2">
+<div class="d-flex justify-content-between align-items-center mb-2 gap-3">
   <h5 class="mb-0">Personas y colación asignada</h5>
+  <div class="d-flex align-items-center gap-3">
+    <span class="ds-caption text-end">
+      {% if station.persons_refresh_requested_at %}
+        <span class="spinner-border spinner-border-sm align-middle" aria-hidden="true"></span>
+        Actualización solicitada a las {{ station.persons_refresh_requested_at|date:"H:i:s" }}: esperando al terminal…
+      {% elif station.persons_refreshed_at %}
+        Última lectura de HikCentral: {{ station.persons_refreshed_at|date:"d-m-Y H:i:s" }}
+      {% endif %}
+    </span>
+    <form method="post" action="{% url 'webapp:person_refresh' station.pk %}" class="m-0">
+      {% csrf_token %}
+      <button class="btn btn-sm btn-primary text-nowrap" {% if station.persons_refresh_requested_at %}disabled{% endif %}>
+        <i class="bi bi-arrow-repeat"></i> Actualizar desde HikCentral
+      </button>
+    </form>
+  </div>
 </div>
+{% if station.persons_refresh_requested_at %}
+{# mientras el terminal no confirma, la página se vuelve a cargar sola #}
+<script>setTimeout(function () { location.reload(); }, 4000);</script>
+{% endif %}
 <p class="small text-muted">
   La colación de cada persona se administra en <strong>HikCentral</strong> (campo personalizado
   «Colacion»: <code>0</code> sin colación, <code>1</code> solo almuerzo, <code>2</code> todos los turnos).

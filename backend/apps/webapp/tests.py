@@ -22,7 +22,8 @@ User = get_user_model()
 # Rutas del backoffice agrupadas por la capacidad que exigen.
 PANEL = ['/']
 TICKETS = ['/monitor/', '/monitor/turnos/', '/visitas/', '/visitas/colaciones/',
-           '/visitas/funcionarios/', '/reportes/', '/reportes/pdf/', '/reportes/excel/']
+           '/visitas/funcionarios/', '/reportes/', '/reportes/pdf/', '/reportes/excel/',
+           '/reportes/turnos/']
 CONFIG = ['/turnos/', '/estaciones/', '/usuarios/', '/visitas/tarjetas/']
 
 
@@ -262,6 +263,59 @@ class MonitorWebSocketPermissionTests(TransactionTestCase):
             await communicator.disconnect()
 
 
+class StationWebSocketTests(TransactionTestCase):
+    """
+    Canal de órdenes hacia el terminal (`/ws/station/`): entra solo con la API key de una
+    estación, y lo que se ordena desde el backoffice le llega al terminal conectado.
+    """
+
+    serialized_rollback = True
+
+    def _station_with_key(self):
+        from backend.apps.core.models import StationAPIKey
+
+        station = Station.objects.create(name='Casino WS', device_id=1000)
+        _, key = StationAPIKey.objects.create_key(name='test', station=station)
+        return station, key
+
+    def _communicator(self, key=None):
+        from channels.testing import WebsocketCommunicator
+
+        from backend.asgi import application
+
+        headers = [(b'authorization', f'Api-Key {key}'.encode())] if key else []
+        return WebsocketCommunicator(application, '/ws/station/', headers=headers)
+
+    async def test_sin_api_key_valida_no_conecta(self):
+        for key in (None, 'clave.inventada'):
+            communicator = self._communicator(key)
+            conectado, _ = await communicator.connect()
+            self.assertFalse(conectado)
+
+    async def test_la_orden_del_backoffice_llega_al_terminal(self):
+        import json
+
+        from channels.db import database_sync_to_async
+
+        station, key = await database_sync_to_async(self._station_with_key)()
+        communicator = self._communicator(key)
+        conectado, _ = await communicator.connect()
+        self.assertTrue(conectado)
+        self.assertTrue(await communicator.receive_nothing(timeout=0.2))   # nada pendiente
+
+        await database_sync_to_async(station.request_persons_refresh)()
+        self.assertEqual(json.loads(await communicator.receive_from(timeout=3)),
+                         {'command': 'sync_persons'})
+        await communicator.disconnect()
+
+        # un terminal que se conecta DESPUÉS de la solicitud la recibe al conectar
+        communicator = self._communicator(key)
+        await communicator.connect()
+        self.assertEqual(json.loads(await communicator.receive_from(timeout=3)),
+                         {'command': 'sync_persons'})
+        await communicator.disconnect()
+
+
 class LoginRedirectTests(TestCase):
     """El login lleva a cada rol a su sección y no fuera del sitio."""
 
@@ -364,7 +418,8 @@ class VisitRegistryTests(TestCase):
 
     def _registrar(self, **extra):
         data = {'station': self.station.pk, 'visitor_name': 'Juanito Pérez', 'card_no': '002',
-                'host_company': 'PTJ', 'host_name': 'Nicolás Muñoz'}
+                'host_company': 'PTJ', 'host_name': 'Nicolás Muñoz',
+                'meal_date': timezone.localdate().isoformat()}
         data.update(extra)
         return self.client.post('/visitas/', data)
 
@@ -378,6 +433,35 @@ class VisitRegistryTests(TestCase):
         self.assertEqual((v.host_company, v.host_name), ('PTJ', 'Nicolás Muñoz'))
         self.assertEqual(v.host_person, self.host)      # ligada a la ficha de HikCentral
         self.assertTrue(v.is_open)
+
+    def test_la_entrega_carga_una_colacion_para_un_dia_y_turno(self):
+        from backend.apps.core.models import ShiftSchedule
+        hoy = timezone.localdate()
+        almuerzo = ShiftSchedule.objects.create(
+            station=self.station, name='Almuerzo', start_min=720, end_min=840)
+        sin_visitas = ShiftSchedule.objects.create(
+            station=self.station, name='Cena', start_min=1200, end_min=1260, allow_visitors=False)
+
+        # día pasado, o un turno que no admite visitas: no se registra
+        self.assertEqual(self._registrar(meal_date=(hoy - timedelta(days=1)).isoformat()).status_code, 200)
+        self.assertEqual(self._registrar(meal_shift=sin_visitas.uid).status_code, 200)
+        self.assertEqual(Visit.objects.count(), 0)
+
+        self.assertEqual(self._registrar(meal_shift=almuerzo.uid).status_code, 302)
+        v = Visit.objects.get()
+        self.assertEqual((v.meal_date, v.meal_schedule_uid, v.meal_shift_name), (hoy, almuerzo.uid, 'Almuerzo'))
+        self.assertEqual((v.meal_state, v.origin), ('pending', 'backoffice'))
+        self.assertEqual(Visit.grants_for(self.station), [{
+            'uid': v.uid, 'card_no': '002', 'meal_date': hoy.isoformat(),
+            'schedule_uid': almuerzo.uid, 'shift_name': 'Almuerzo',
+            'visitor_name': 'Juanito Pérez', 'used': False,
+        }])
+
+        # devuelta sin usar: la carga deja de valer
+        self.client.post(f'/visitas/{v.pk}/devolver/')
+        self.assertEqual(Visit.grants_for(self.station), [])
+        v.refresh_from_db()
+        self.assertEqual(v.meal_state, 'expired')
 
     def test_funcionario_que_no_esta_en_la_ficha_se_guarda_igual(self):
         self._registrar(host_name='Alguien Nuevo', host_company='Otra')
@@ -484,6 +568,18 @@ class CustomRoleTests(TestCase):
         for url in ('/monitor/', '/visitas/', '/usuarios/', '/roles/', '/turnos/', '/visitas/tarjetas/'):
             resp = self.client.get(url)
             self.assertEqual(resp.status_code, 302, f'{url} debería negarse')
+
+    def test_detalle_de_turnos_es_un_permiso_aparte_de_reporteria(self):
+        user = self._rol_con('reports')
+        self.client.force_login(user)
+        resp = self.client.get('/reportes/turnos/', follow=True)
+        self.assertIn(DENIED_MESSAGE, [str(m) for m in get_messages(resp.wsgi_request)])
+        self.assertNotContains(self.client.get('/reportes/'), 'Detalle de turnos')
+
+        user.role.permissions = ['reports', 'shifts']
+        user.role.save()
+        self.assertEqual(self.client.get('/reportes/turnos/').status_code, 200)
+        self.assertContains(self.client.get('/reportes/'), 'Detalle de turnos')
 
     def test_la_entrada_es_la_primera_seccion_permitida(self):
         user = self._rol_con('reports')

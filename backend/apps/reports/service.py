@@ -34,8 +34,8 @@ class ShiftRow:
 @dataclass
 class VisitRow:
     """
-    Una visita registrada (a quién se entregó la tarjeta) con las colaciones que retiró en
-    el período; o una tarjeta usada sin registro de visita, para que se note.
+    Una visita registrada (a quién se entregó la tarjeta) que retiró colación en el período,
+    con cuántas retiró; o una tarjeta usada sin registro de visita, para que se note.
     """
     visit: Visit | None
     card_no: str
@@ -92,7 +92,6 @@ class ReportData:
     personas_unicas: int = 0
     duplicados: int = 0
     no_autorizados: int = 0
-    sin_turno: int = 0           # marcaciones fuera de turno (rechazadas, no suman)
     visitas: int = 0             # colaciones servidas a visitas (tarjeta RFID)
     visitas_sin_registro: int = 0  # de esas, con tarjeta entregada sin registro de visita
     manuales: int = 0            # colaciones de ingreso manual (incluidas en `servidas`)
@@ -168,7 +167,8 @@ def build_report(date_from: datetime, date_to: datetime,
         (e for e in events if e.status == AccessEvent.Status.NO_AUTORIZADO),
         key=lambda e: e.event_time)
     data.no_autorizados = len(data.no_autorizados_detalle)
-    data.sin_turno = sum(1 for e in events if e.status == AccessEvent.Status.SIN_TURNO)
+    # Las marcaciones «fuera de turno» no se informan: el terminal ya no las registra (sin
+    # turno iniciado descarta la marcación). Las históricas siguen sin sumar a nada.
     data.visitas = sum(1 for e in served if e.is_visitor)
     data.personas_unicas = len({e.employee_no for e in served})
 
@@ -176,8 +176,7 @@ def build_report(date_from: datetime, date_to: datetime,
     visitor_ok = [e for e in served if e.is_visitor]
     Visit.attach_to_events(visitor_ok)
     data.visitas_sin_registro = sum(1 for e in visitor_ok if e.visit is None)
-    data.visitas_detalle = _visit_rows(visitor_ok, date_from, date_to, station,
-                                       solo_con_colaciones=bool(shift_name))
+    data.visitas_detalle = _visit_rows(visitor_ok)
 
     # ---- Por día ----
     por_dia = defaultdict(int)
@@ -271,23 +270,14 @@ def build_report(date_from: datetime, date_to: datetime,
     return data
 
 
-def _visit_rows(visitor_ok, date_from, date_to, station, solo_con_colaciones=False):
+def _visit_rows(visitor_ok):
     """
-    Filas de la sección «Visitas»: las visitas registradas cuya entrega cae en el período
-    (aunque no hayan retirado colación), más las que retiraron colación en el período
-    habiéndose entregado antes, más las tarjetas usadas sin registro de visita.
-    Con filtro por turno solo interesan las que retiraron en ese turno.
+    Filas de la sección «Visitas»: SOLO las visitas que efectivamente retiraron colación en
+    el período (la tarjeta se marcó en el terminal), más las tarjetas usadas sin registro de
+    visita. Una visita registrada que no fue al casino no figura ni se cuenta: el informe
+    respalda un cobro, y solo se cobra lo que se sirvió.
     """
-    visits_qs = (Visit.objects.filter(delivered_at__gte=date_from, delivered_at__lt=date_to)
-                 .select_related('station').order_by('delivered_at'))
-    if station is not None:
-        visits_qs = visits_qs.filter(station=station)
-
     rows = {}
-    for v in visits_qs:
-        rows[('v', v.pk)] = VisitRow(visit=v, card_no=v.card_no, card_label=v.card_label,
-                                     station=v.station, first_at=v.delivered_at)
-
     labels = None
     for e in visitor_ok:
         if e.visit is not None:
@@ -309,7 +299,5 @@ def _visit_rows(visitor_ok, date_from, date_to, station, solo_con_colaciones=Fal
         rows[key].colaciones += 1
 
     out = list(rows.values())
-    if solo_con_colaciones:
-        out = [r for r in out if r.colaciones]
     out.sort(key=lambda r: (r.first_at, r.card_no))
     return out

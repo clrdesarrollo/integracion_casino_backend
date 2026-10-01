@@ -39,7 +39,7 @@ class ManualEntryReportTests(TestCase):
                 employee_no=str(i), person_name=who, company=company,
                 event_time=_at(self.day, 12, 10 + i), status=AccessEvent.Status.OK,
             )
-        # marcación fuera de turno: el kiosco la rechaza, no suma a ningún turno
+        # marcación fuera de turno histórica (el kiosco ya no las registra): no suma a nada
         AccessEvent.objects.create(
             station=self.station, uid='ev9', remote_id=9, employee_no='9', person_name='Paseante',
             company='PPE', event_time=_at(self.day, 16), status=AccessEvent.Status.SIN_TURNO,
@@ -53,7 +53,6 @@ class ManualEntryReportTests(TestCase):
         self.assertEqual(data.manuales, 25)
         self.assertEqual(data.servidas, 2 + 25)   # en turno + manual
         self.assertEqual(data.por_dia, [(self.day, 27)])
-        self.assertEqual(data.sin_turno, 1)
         self.assertEqual(data.personas_unicas, 2)
 
     def test_manual_count_by_shift_and_company(self):
@@ -76,12 +75,44 @@ class ManualEntryReportTests(TestCase):
         data = self._report(shift_name='Once')
         self.assertEqual((data.servidas, data.manuales), (25, 25))
         data = self._report(shift_name='Almuerzo')
-        self.assertEqual((data.servidas, data.manuales, data.sin_turno), (2, 0, 0))
+        self.assertEqual((data.servidas, data.manuales), (2, 0))
 
     def test_pdf_and_excel_render_with_manual_entry(self):
         data = self._report()
         self.assertTrue(build_pdf(data, 'Informe').startswith(b'%PDF'))
         self.assertTrue(build_excel(data, 'Informe').startswith(b'PK'))
+
+    def test_shift_list_and_detail_pages(self):
+        """Detalle de turnos: listado por apertura y, por turno, quién marcó y a qué hora."""
+        user = get_user_model().objects.create_user(
+            email='g@g.cl', password='x', first_name='G', last_name='G', role=Role.objects.get(code='gerente'))
+        self.client.force_login(user)
+        Shift.objects.filter(pk=self.almuerzo.pk).update(auto=True, end_reason=Shift.EndReason.MANUAL)
+        AccessEvent.objects.create(
+            station=self.station, uid='ev5', remote_id=5, shift=self.almuerzo, employee_no='1',
+            person_name='Ana', company='PPE', event_time=_at(self.day, 12, 30),
+            status=AccessEvent.Status.DUPLICADO)
+
+        resp = self.client.get(f'/reportes/turnos/?from={self.day:%Y-%m-%d}&to={self.day:%Y-%m-%d}')
+        self.assertEqual(resp.status_code, 200)
+        rows = {s.name: s for s in resp.context['shifts']}
+        self.assertEqual((rows['Almuerzo'].n_ok, rows['Almuerzo'].n_dup, rows['Almuerzo'].n_denied), (2, 1, 0))
+        self.assertContains(resp, 'automático')   # inicio por horario
+        self.assertContains(resp, 'ingreso manual')
+
+        resp = self.client.get(f'/reportes/turnos/{self.almuerzo.pk}/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual([e.person_name for e in resp.context['events']], ['Ana', 'Luis', 'Ana'])
+        self.assertEqual((resp.context['n_ok'], resp.context['n_personas'], resp.context['n_dup']), (2, 2, 1))
+        self.assertContains(resp, '12:11:00')     # hora de la marcación al segundo
+        self.assertContains(resp, '12:00:00')     # inicio del turno al segundo
+
+        # turno de ingreso manual: sin marcaciones, muestra la cantidad
+        self.assertContains(self.client.get(f'/reportes/turnos/{self.once.pk}/'), 'ingreso manual')
+
+        resp = self.client.get(f'/reportes/turnos/{self.almuerzo.pk}/excel/')
+        self.assertTrue(resp.content.startswith(b'PK'))
+        self.assertEqual(self.client.get('/reportes/turnos/999999/').status_code, 404)
 
     def test_dashboard_month_total_includes_manual(self):
         today = timezone.localdate()
@@ -178,7 +209,7 @@ class VisitReportTests(TestCase):
             visitor_name='Juanito Pérez', host_name='Nicolás Muñoz', host_company='PTJ',
             delivered_by_name='Portería', delivered_at=_at(self.day, 11),
         )
-        # sin colaciones: igual debe figurar como visita del día
+        # registrada pero no retiró colación: NO debe figurar ni contarse en el informe
         Visit.objects.create(
             station=self.station, card_no='003', card_label='Visita 03', visitor_name='Solo Pasó',
             host_company='ACME', delivered_at=_at(self.day, 9), returned_at=_at(self.day, 9, 30),
@@ -202,12 +233,13 @@ class VisitReportTests(TestCase):
         rows = {(r.visitor_name, r.card_no): r for r in data.visitas_detalle}
         self.assertEqual(rows[('Juanito Pérez', '002')].colaciones, 1)   # la repetida no cuenta
         self.assertEqual(rows[('Juanito Pérez', '002')].host_display, 'Nicolás Muñoz (PTJ)')
-        self.assertEqual(rows[('Solo Pasó', '003')].colaciones, 0)
+        self.assertNotIn(('Solo Pasó', '003'), rows)   # no fue al casino: no se cuenta
         sin = rows[('(sin registro de visita)', '003')]
         self.assertFalse(sin.registrada)
         self.assertEqual((sin.colaciones, sin.card_label), (1, 'Visita 03'))
         # orden cronológico por entrega (o primera colación si no hay registro)
-        self.assertEqual([r.card_no for r in data.visitas_detalle], ['003', '002', '003'])
+        self.assertEqual([r.card_no for r in data.visitas_detalle], ['002', '003'])
+        self.assertTrue(all(r.colaciones for r in data.visitas_detalle))
 
         # en el detalle por persona la visita registrada aparece con su nombre
         nombres = [n for n, *_ in data.por_persona]

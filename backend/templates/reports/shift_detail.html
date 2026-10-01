@@ -1,0 +1,130 @@
+{% extends 'base.html' %}
+{% block title %}Turno {{ shift.name }} · Casino{% endblock %}
+{% block nav_shifts %}active{% endblock %}
+
+{% block content %}
+<style>
+  .ev-thumb { width:34px; height:34px; border-radius:50%; object-fit:cover; display:block; }
+  .ev-thumb-empty { display:flex; align-items:center; justify-content:center;
+                    background:var(--ds-canvas-soft); color:var(--ds-ink-mute); }
+</style>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h1 class="page-title mb-0">Turno {{ shift.name }}
+    <span class="ds-caption">· {{ shift.station.name }}{% if shift.service_date %} · {{ shift.service_date|date:"d-m-Y" }}{% endif %}</span>
+  </h1>
+  <div>
+    <a href="{% url 'reports:shift_list' %}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left"></i> Turnos</a>
+    <a href="{% url 'reports:shift_excel' shift.pk %}" class="btn btn-sm btn-outline-success"><i class="bi bi-file-excel"></i> Excel</a>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <div class="row g-3">
+      <div class="col-md-4">
+        <div class="ds-caption">Inicio</div>
+        <div>{% include "reports/_shift_start.html" with shift=shift fmt="d-m-Y H:i:s" %}</div>
+      </div>
+      <div class="col-md-4">
+        <div class="ds-caption">Término</div>
+        <div>{% include "reports/_shift_end.html" with shift=shift fmt="d-m-Y H:i:s" %}</div>
+        {% if shift.end_reason and not shift.is_manual_entry %}<div class="ds-caption">{{ shift.get_end_reason_display }}</div>{% endif %}
+      </div>
+      <div class="col-md-4">
+        <div class="ds-caption">Duración</div>
+        <div>{% if shift.is_manual_entry %}—{% else %}{{ shift.duration_text }}{% endif %}</div>
+      </div>
+    </div>
+    {% if related %}
+    <div class="ds-caption mt-3">
+      {% if shift.is_reopening %}Este turno es una reapertura.{% else %}Este turno fue reabierto.{% endif %}
+      Mismo servicio:
+      {% for r in related %}
+        <a href="{% url 'reports:shift_detail' r.pk %}">{{ r.started_at|date:"H:i:s" }}{% if r.ended_at %}–{{ r.ended_at|date:"H:i:s" }}{% endif %}</a>{% if not forloop.last %}, {% endif %}
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+{% if shift.is_manual_entry %}
+<div class="row g-3 mb-3">
+  <div class="col-md-4"><div class="card stat-card shadow-sm"><div class="card-body">
+    <div class="value is-info">{{ shift.manual_count }}</div><div class="label">Colaciones de ingreso manual</div></div></div></div>
+</div>
+<p class="text-muted">Turno de ingreso manual: nadie marca; la cantidad la registró la cocinera en el terminal.</p>
+{% else %}
+<div class="row g-3 mb-3">
+  <div class="col"><div class="card stat-card shadow-sm"><div class="card-body">
+    <div class="value">{{ n_ok }}</div><div class="label">Colaciones válidas</div></div></div></div>
+  <div class="col"><div class="card stat-card shadow-sm"><div class="card-body">
+    <div class="value is-success">{{ n_personas }}</div><div class="label">Personas distintas</div></div></div></div>
+  <div class="col"><div class="card stat-card shadow-sm"><div class="card-body">
+    <div class="value is-warning">{{ n_dup }}</div><div class="label">Intentos duplicados</div></div></div></div>
+  <div class="col"><div class="card stat-card shadow-sm"><div class="card-body">
+    <div class="value is-info">{{ n_visitas }}</div><div class="label">Visitas (tarjeta)</div></div></div></div>
+  <div class="col"><div class="card stat-card shadow-sm"><div class="card-body">
+    <div class="value is-danger">{{ n_denied }}</div><div class="label">No autorizados</div></div></div></div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-header d-flex justify-content-between align-items-center gap-3">
+    <span>Marcaciones del turno <span class="ds-caption fw-normal">— {{ events|length }}, en orden de llegada</span></span>
+    <input id="evSearch" type="search" class="form-control form-control-sm" style="max-width:280px"
+           placeholder="Buscar por nombre, empresa o nº" autocomplete="off" aria-label="Buscar en las marcaciones">
+  </div>
+  <div class="table-responsive"><table class="table table-hover table-sm mb-0 align-middle">
+    <thead><tr><th>Hora</th><th></th><th>Persona</th><th>Nº</th><th>Empresa</th><th>Método</th><th>Estado</th></tr></thead>
+    <tbody id="evRows">
+      {% for ev in events %}
+      <tr data-search="{{ ev.person_name }} {{ ev.company }} {{ ev.employee_no }}">
+        <td class="text-nowrap fw-semibold">{{ ev.event_time|date:"H:i:s" }}</td>
+        <td>
+          {% if ev.person_photo_url %}<img src="{{ ev.person_photo_url }}" alt="" loading="lazy" class="ev-thumb">
+          {% else %}<span class="ev-thumb ev-thumb-empty"><i class="bi bi-person"></i></span>{% endif %}
+        </td>
+        <td>{{ ev.person_name|default:ev.employee_no }}
+          {% if ev.is_visitor %}<span class="badge bg-info ms-1">visita</span>{% endif %}</td>
+        <td><code>{{ ev.employee_no }}</code></td>
+        <td>{{ ev.company|default:"—" }}</td>
+        <td>{{ ev.verify_method|default:"—" }}</td>
+        <td>
+          {% if ev.status == 'Ok' %}<span class="badge bg-success">Colación válida</span>
+          {% elif ev.status == 'Duplicado' %}<span class="badge bg-warning">Duplicado</span>
+          {% elif ev.status == 'NoAutorizado' %}<span class="badge bg-danger">No autorizado</span>
+          {% else %}<span class="badge bg-secondary">{{ ev.get_status_display }}</span>{% endif %}
+          {% if ev.detail and ev.status != 'Ok' %}<div class="ds-caption">{{ ev.detail }}</div>{% endif %}
+        </td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="7" class="text-muted text-center py-3">El turno no tiene marcaciones.</td></tr>
+      {% endfor %}
+      <tr id="evNone" style="display:none"><td colspan="7" class="text-muted text-center py-3">Ninguna marcación coincide con la búsqueda.</td></tr>
+    </tbody>
+  </table></div>
+</div>
+
+<script>
+(function () {
+  // Buscador sobre las filas ya cargadas: sin tildes ni mayúsculas.
+  const box = document.getElementById('evSearch');
+  const rows = Array.prototype.slice.call(document.querySelectorAll('#evRows tr[data-search]'));
+  const none = document.getElementById('evNone');
+  const MARKS = new RegExp('[' + String.fromCharCode(0x300) + '-' + String.fromCharCode(0x36f) + ']', 'g');
+  function fold(s) { return (s || '').toLowerCase().normalize('NFD').replace(MARKS, ''); }
+  rows.forEach(function (r) { r.dataset.search = fold(r.dataset.search); });
+  box.addEventListener('input', function () {
+    const words = fold(box.value).split(/\s+/).filter(Boolean);
+    let shown = 0;
+    rows.forEach(function (r) {
+      const ok = words.every(function (w) { return r.dataset.search.indexOf(w) !== -1; });
+      r.style.display = ok ? '' : 'none';
+      if (ok) shown++;
+    });
+    none.style.display = (rows.length && !shown) ? '' : 'none';
+  });
+})();
+</script>
+{% endif %}
+{% endblock %}

@@ -66,8 +66,6 @@
   <div class="col"><div class="card stat-card shadow-sm"><div class="card-body">
     <div class="value is-danger">{{ data.no_autorizados }}</div><div class="label">No autorizados</div>
     {% if data.no_autorizados %}<a href="#no-autorizados" class="stretched-link" aria-label="Ver detalle de no autorizados"></a>{% endif %}</div></div></div>
-  <div class="col"><div class="card stat-card shadow-sm"><div class="card-body">
-    <div class="value text-muted">{{ data.sin_turno }}</div><div class="label">Fuera de turno</div></div></div></div>
 </div>
 
 <div class="row g-3">
@@ -115,16 +113,16 @@
   <div class="col-12">
     <div class="card shadow-sm">
       <div class="card-header">Colaciones por turno
-        <span class="ds-caption fw-normal">— «En turno»: colaciones válidas dentro del turno. «Manual»: cantidad registrada por la cocinera en un turno sin marcación.</span>
+        <span class="ds-caption fw-normal">— «En turno»: colaciones válidas dentro del turno. «Manual»: cantidad registrada por la cocinera en un turno sin marcación. Junto a cada hora se indica si el inicio o el término fue automático (por horario) o manual (desde la pantalla del terminal).</span>
       </div>
       <div class="table-responsive"><table class="table table-sm mb-0">
         <thead><tr><th>Turno</th><th>Inicio</th><th>Término</th><th class="text-end">En turno</th><th class="text-end">Manual</th><th class="text-end">Total</th></tr></thead>
         <tbody>
           {% for r in data.por_turno %}
           <tr>
-            <td>{{ r.shift.name }}</td>
-            <td>{{ r.shift.started_at|date:"d-m H:i" }}</td>
-            <td>{% if r.shift.is_manual_entry %}<span class="badge bg-info">ingreso manual</span>{% elif r.shift.ended_at %}{{ r.shift.ended_at|date:"d-m H:i" }}{% else %}<span class="text-muted">en curso</span>{% endif %}</td>
+            <td>{% if user.caps.shifts %}<a href="{% url 'reports:shift_detail' r.shift.pk %}" title="Ver el detalle del turno">{{ r.shift.name }}</a>{% else %}{{ r.shift.name }}{% endif %}</td>
+            <td class="text-nowrap">{% include "reports/_shift_start.html" with shift=r.shift fmt="d-m H:i" %}</td>
+            <td class="text-nowrap">{% include "reports/_shift_end.html" with shift=r.shift fmt="d-m H:i" %}</td>
             <td class="text-end">{{ r.en_turno }}</td>
             <td class="text-end">{{ r.manuales }}</td>
             <td class="text-end fw-semibold">{{ r.total }}</td>
@@ -139,7 +137,7 @@
   <div class="col-12" id="visitas">
     <div class="card shadow-sm">
       <div class="card-header">Visitas
-        <span class="ds-caption fw-normal">— a quién se entregó cada tarjeta, quién la entregó y a quién venía a ver, con sus colaciones del período</span>
+        <span class="ds-caption fw-normal">— solo las visitas que retiraron colación en el período (tarjeta marcada en el terminal): a quién se entregó, quién la entregó y a quién venía a ver</span>
         {% if data.visitas_sin_registro %}<span class="badge text-bg-warning ms-1">{{ data.visitas_sin_registro }} sin registro</span>{% endif %}
       </div>
       <div class="table-responsive"><table class="table table-sm mb-0">

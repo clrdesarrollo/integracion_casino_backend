@@ -1,0 +1,7 @@
+{# Hora de inicio de un turno + cómo se abrió. Espera `shift`; `fmt` = formato de la hora. #}
+{{ shift.started_at|date:fmt }}
+{% if not shift.is_manual_entry %}
+  {% if shift.start_mode == 'auto' %}<span class="badge bg-light ms-1" title="Lo abrió el terminal por horario, al terminar el turno anterior">automático</span>
+  {% elif shift.is_reopening %}<span class="badge bg-warning ms-1" title="El operador reabrió el turno desde la pantalla del terminal">reapertura manual</span>
+  {% else %}<span class="badge bg-warning ms-1" title="El operador lo inició desde la pantalla del terminal">manual</span>{% endif %}
+{% endif %}

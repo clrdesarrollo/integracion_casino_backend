@@ -112,7 +112,6 @@ def build_pdf(data: ReportData, titulo: str) -> bytes:
         stat(data.visitas, 'Visitas (tarjeta)', '#3A3A3C'),
         stat(data.manuales, 'Ingreso manual', '#3A3A3C'),
         stat(data.no_autorizados, 'No autorizados', '#C8102E'),
-        stat(data.sin_turno, 'Fuera de turno', '#6E6E73'),
     ]
     # cada tarjeta es una mini-tabla en una columna
     cards = [[Table([[s[0]], [s[1]]]) for s in stats]]
@@ -165,12 +164,16 @@ def build_pdf(data: ReportData, titulo: str) -> bytes:
             if s.is_manual_entry:
                 fin = 'ingreso manual'
             else:
+                # junto a la hora: si fue por horario (auto) o desde la pantalla (manual)
+                ini += f' ({s.start_mode})'
                 fin = _local(s.ended_at) if s.ended_at else 'en curso'
+                if s.end_mode:
+                    fin += f' ({s.end_mode})'
             rows.append([s.name, ini, fin, str(r.en_turno),
                          str(r.manuales), str(r.total)])
         story.append(data_table(
             ['Turno', 'Inicio', 'Término', 'En turno', 'Manual', 'Total'],
-            rows, [44 * mm, 28 * mm, 32 * mm, 22 * mm, 22 * mm, 22 * mm],
+            rows, [36 * mm, 40 * mm, 47 * mm, 19 * mm, 19 * mm, 19 * mm],
             right_cols=[3, 4, 5]))
 
     meal_types = data.meal_types
@@ -215,8 +218,9 @@ def build_pdf(data: ReportData, titulo: str) -> bytes:
     # ---- Visitas (registro de entrega de tarjetas) ----
     if data.visitas_detalle:
         story.append(Paragraph('Visitas', section))
-        nota = ('A quién se entregó cada tarjeta de visita, quién la entregó y a quién venía a ver, '
-                'con las colaciones que retiró en el período.')
+        nota = ('Visitas que retiraron colación en el período (tarjeta marcada en el terminal): a quién '
+                'se entregó la tarjeta, quién la entregó y a quién venía a ver. Una visita registrada '
+                'que no retiró colación no figura.')
         if data.visitas_sin_registro:
             nota += (f' {data.visitas_sin_registro} colación(es) se retiraron con tarjeta '
                      'sin registro de visita.')

@@ -51,6 +51,9 @@
           {% if caps.reports %}
           <li class="nav-item"><a class="nav-link {% block nav_reports %}{% endblock %}" href="{% url 'reports:report' %}"><i class="bi bi-file-earmark-bar-graph"></i> Reportería</a></li>
           {% endif %}
+          {% if caps.shifts %}
+          <li class="nav-item"><a class="nav-link {% block nav_shifts %}{% endblock %}" href="{% url 'reports:shift_list' %}"><i class="bi bi-clock-history"></i> Detalle de turnos</a></li>
+          {% endif %}
           {% if caps.config %}
           <li class="nav-item"><a class="nav-link {% block nav_config %}{% endblock %}" href="{% url 'webapp:config_index' %}"><i class="bi bi-calendar2-week"></i> Turnos y empresas</a></li>
           <li class="nav-item"><a class="nav-link {% block nav_stations %}{% endblock %}" href="{% url 'webapp:station_list' %}"><i class="bi bi-hdd-network"></i> Estaciones</a></li>
@@ -81,6 +84,33 @@
 {% endif %}
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+(function () {
+  // Todo campo de contraseña lleva un botón para mostrarla u ocultarla.
+  document.querySelectorAll('input[type="password"]').forEach(function (input) {
+    var group = document.createElement('div');
+    group.className = 'input-group';
+    input.parentNode.insertBefore(group, input);
+    group.appendChild(input);
+
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn-outline-secondary';
+    btn.setAttribute('aria-label', 'Mostrar contraseña');
+    btn.title = 'Mostrar contraseña';
+    btn.innerHTML = '<i class="bi bi-eye"></i>';
+    btn.addEventListener('click', function () {
+      var show = input.type === 'password';
+      input.type = show ? 'text' : 'password';
+      btn.innerHTML = '<i class="bi ' + (show ? 'bi-eye-slash' : 'bi-eye') + '"></i>';
+      btn.title = show ? 'Ocultar contraseña' : 'Mostrar contraseña';
+      btn.setAttribute('aria-label', btn.title);
+      input.focus();
+    });
+    group.appendChild(btn);
+  });
+})();
+</script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

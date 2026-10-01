@@ -6,7 +6,9 @@ from channels.generic.websocket import AsyncWebsocketConsumer
 from django.utils import timezone
 
 from backend.apps.core.models import AccessEvent, Person, Shift
-from backend.apps.realtime.broadcast import MONITOR_GROUP, active_shifts, serialize_event
+from backend.apps.realtime.broadcast import (
+    MONITOR_GROUP, active_shifts, serialize_event, station_group,
+)
 
 
 class MonitorConsumer(AsyncWebsocketConsumer):
@@ -111,3 +113,69 @@ class MonitorConsumer(AsyncWebsocketConsumer):
             'visitas': today_qs.filter(status=AccessEvent.Status.OK, is_visitor=True).count(),
         }
         return {'events': recent, 'counts': counts, 'shifts': active_shifts()}
+
+
+class StationConsumer(AsyncWebsocketConsumer):
+    """
+    Canal de órdenes hacia el terminal (kiosco). El terminal se conecta con la misma
+    cabecera `Authorization: Api-Key <clave>` de la sincronización HTTP y queda escuchando;
+    el backoffice le manda órdenes cortas («sync_persons», «sync») para que actúe al
+    instante. El canal es solo un aviso: los datos siguen viajando por `/api/sync/`, y si
+    el WebSocket está caído el terminal recoge lo pendiente en su sincronización periódica.
+    """
+
+    async def connect(self):
+        self.group = None
+        station_id = await self._station_from_key()
+        if station_id is None:
+            await self.close(code=4401)
+            return
+        self.group = station_group(station_id)
+        await self.channel_layer.group_add(self.group, self.channel_name)
+        await self.accept()
+        # lo que se pidió mientras el terminal no estaba conectado
+        if await self._refresh_pending(station_id):
+            await self.send(text_data=json.dumps({'command': 'sync_persons'}))
+
+    async def disconnect(self, code):
+        if self.group:
+            await self.channel_layer.group_discard(self.group, self.channel_name)
+
+    async def receive(self, text_data=None, bytes_data=None):
+        if text_data == 'ping':
+            await self.send(text_data='pong')
+
+    async def station_command(self, message):
+        """Handler del group_send type='station.command'."""
+        await self.send(text_data=json.dumps({'command': message['command']}))
+
+    def _api_key(self):
+        for name, value in self.scope.get('headers', []):
+            if name == b'authorization':
+                kind, _, key = value.decode('latin-1').partition(' ')
+                return key.strip() if kind.lower() == 'api-key' else ''
+        return ''
+
+    @database_sync_to_async
+    def _station_from_key(self):
+        from backend.apps.core.models import StationAPIKey
+
+        key = self._api_key()
+        if not key:
+            return None
+        try:
+            # get_from_key ya descarta las claves revocadas
+            api_key = StationAPIKey.objects.get_from_key(key)
+        except StationAPIKey.DoesNotExist:
+            return None
+        if api_key.has_expired:
+            return None
+        station = api_key.station
+        return station.pk if station and station.is_active else None
+
+    @database_sync_to_async
+    def _refresh_pending(self, station_id):
+        from backend.apps.core.models import Station
+
+        return Station.objects.filter(
+            pk=station_id, persons_refresh_requested_at__isnull=False).exists()

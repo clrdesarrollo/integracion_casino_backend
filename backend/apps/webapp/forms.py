@@ -346,14 +346,31 @@ class VisitForm(forms.Form):
         widget=forms.TextInput(attrs={**_INPUT, 'list': 'funcionarios-sugeridos', 'autocomplete': 'off',
                                       'placeholder': 'Escribe el nombre para buscarlo'}))
     card_no = forms.ChoiceField(label='Tarjeta que se entrega', widget=forms.Select(attrs=_SELECT))
+    # La entrega carga la tarjeta con UNA colación, válida para este día y este turno.
+    meal_date = forms.DateField(
+        label='Día de la colación',
+        widget=forms.DateInput(attrs={**_INPUT, 'type': 'date'}, format='%Y-%m-%d'))
+    meal_shift = forms.ChoiceField(
+        label='Turno de la colación', required=False, widget=forms.Select(attrs=_SELECT))
     notes = forms.CharField(
         label='Observación', max_length=300, required=False,
         widget=forms.TextInput(attrs={**_INPUT, 'placeholder': 'Opcional'}))
 
     def __init__(self, *args, station, **kwargs):
         super().__init__(*args, **kwargs)
+        from django.utils import timezone
         from backend.apps.core.models import Visit
         self.station = station
+        self.fields['meal_date'].initial = timezone.localdate()
+        self.fields['meal_date'].widget.attrs['min'] = timezone.localdate().isoformat()
+        # turnos en los que una visita puede retirar: habilitados, con marcación y que admiten visitas
+        self.schedules = {
+            s.uid: s for s in station.schedules.filter(
+                enabled=True, allow_visitors=True, manual_entry=False).order_by('start_min')
+        }
+        self.fields['meal_shift'].choices = (
+            [('', 'Cualquier turno de ese día')]
+            + [(uid, f'{s.name} ({s.time_range})') for uid, s in self.schedules.items()])
         # tarjetas en uso: se ofrecen igual (la entrega anterior se cierra sola), pero avisando
         in_use = {v.card_no: v for v in Visit.objects.open().filter(station=station)}
         choices = [('', '— Elige la tarjeta —')]
@@ -375,7 +392,17 @@ class VisitForm(forms.Form):
         data = super().clean()
         if not (data.get('host_company') or '').strip() and not (data.get('host_name') or '').strip():
             raise forms.ValidationError('Indica a quién viene a ver: la empresa, el funcionario o ambos.')
+        day, schedule = data.get('meal_date'), self.schedules.get(data.get('meal_shift') or '')
+        if day and schedule and not schedule.applies_on(day):
+            self.add_error('meal_shift', f'El turno «{schedule.name}» no se sirve el {day:%d-%m-%Y}.')
         return data
+
+    def clean_meal_date(self):
+        from django.utils import timezone
+        day = self.cleaned_data['meal_date']
+        if day < timezone.localdate():
+            raise forms.ValidationError('El día de la colación no puede ser anterior a hoy.')
+        return day
 
     def resolve_host(self):
         """Ficha de la persona visitada, si el nombre escrito coincide con una sola."""
@@ -404,7 +431,11 @@ class VisitForm(forms.Form):
         # cierra aquí para que las colaciones desde ahora se atribuyan a quien la tiene.
         for previous in Visit.objects.open().filter(station=self.station, card_no=d['card_no']):
             previous.close(user=user, when=now)
-        return Visit.objects.create(
+        schedule = self.schedules.get(d.get('meal_shift') or '')
+        visit = Visit.objects.create(
+            meal_date=d['meal_date'],
+            meal_schedule_uid=schedule.uid if schedule else '',
+            meal_shift_name=schedule.name if schedule else '',
             station=self.station,
             card_no=d['card_no'],
             card_label=card.label if card else '',
@@ -419,3 +450,6 @@ class VisitForm(forms.Form):
             delivered_at=now,
             notes=(d.get('notes') or '').strip(),
         )
+        # la carga viaja al terminal ahora: la tarjeta sirve apenas se entrega
+        self.station.notify_card_grants_changed()
+        return visit
