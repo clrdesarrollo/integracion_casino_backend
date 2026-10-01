@@ -48,11 +48,9 @@
           {% if caps.visits or caps.visit_events or caps.visit_cards %}
           <li class="nav-item"><a class="nav-link {% block nav_visitors %}{% endblock %}" href="{% if caps.visits %}{% url 'webapp:visit_list' %}{% elif caps.visit_events %}{% url 'webapp:visitor_events' %}{% else %}{% url 'webapp:visitor_cards_index' %}{% endif %}"><i class="bi bi-person-badge"></i> Visitas</a></li>
           {% endif %}
-          {% if caps.reports %}
-          <li class="nav-item"><a class="nav-link {% block nav_reports %}{% endblock %}" href="{% url 'reports:report' %}"><i class="bi bi-file-earmark-bar-graph"></i> Reportería</a></li>
-          {% endif %}
-          {% if caps.shifts %}
-          <li class="nav-item"><a class="nav-link {% block nav_shifts %}{% endblock %}" href="{% url 'reports:shift_list' %}"><i class="bi bi-clock-history"></i> Detalle de turnos</a></li>
+          {# Informes agrupa el informe de colaciones y el detalle de turnos (pestañas dentro) #}
+          {% if caps.reports or caps.shifts %}
+          <li class="nav-item"><a class="nav-link {% block nav_reports %}{% endblock %}" href="{% if caps.reports %}{% url 'reports:report' %}{% else %}{% url 'reports:shift_list' %}{% endif %}"><i class="bi bi-file-earmark-bar-graph"></i> Informes</a></li>
           {% endif %}
           {% if caps.config %}
           <li class="nav-item"><a class="nav-link {% block nav_config %}{% endblock %}" href="{% url 'webapp:config_index' %}"><i class="bi bi-calendar2-week"></i> Turnos y empresas</a></li>

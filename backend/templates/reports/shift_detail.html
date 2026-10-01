@@ -1,6 +1,6 @@
 {% extends 'base.html' %}
 {% block title %}Turno {{ shift.name }} · Casino{% endblock %}
-{% block nav_shifts %}active{% endblock %}
+{% block nav_reports %}active{% endblock %}
 
 {% block content %}
 <style>
@@ -14,7 +14,7 @@
     <span class="ds-caption">· {{ shift.station.name }}{% if shift.service_date %} · {{ shift.service_date|date:"d-m-Y" }}{% endif %}</span>
   </h1>
   <div>
-    <a href="{% url 'reports:shift_list' %}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left"></i> Turnos</a>
+    <a href="{% url 'reports:shift_list' %}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left"></i> Detalle de colaciones</a>
     <a href="{% url 'reports:shift_excel' shift.pk %}" class="btn btn-sm btn-outline-success"><i class="bi bi-file-excel"></i> Excel</a>
   </div>
 </div>

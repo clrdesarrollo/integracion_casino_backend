@@ -574,12 +574,12 @@ class CustomRoleTests(TestCase):
         self.client.force_login(user)
         resp = self.client.get('/reportes/turnos/', follow=True)
         self.assertIn(DENIED_MESSAGE, [str(m) for m in get_messages(resp.wsgi_request)])
-        self.assertNotContains(self.client.get('/reportes/'), 'Detalle de turnos')
+        self.assertNotContains(self.client.get('/reportes/'), 'Detalle de colaciones')
 
         user.role.permissions = ['reports', 'shifts']
         user.role.save()
         self.assertEqual(self.client.get('/reportes/turnos/').status_code, 200)
-        self.assertContains(self.client.get('/reportes/'), 'Detalle de turnos')
+        self.assertContains(self.client.get('/reportes/'), 'Detalle de colaciones')
 
     def test_la_entrada_es_la_primera_seccion_permitida(self):
         user = self._rol_con('reports')
@@ -598,7 +598,7 @@ class CustomRoleTests(TestCase):
         user = self._rol_con('reports')
         self.client.force_login(user)
         html = self.client.get('/reportes/').content.decode()
-        self.assertIn('Reportería', html)
+        self.assertIn('Informes', html)
         self.assertNotIn('Monitor en vivo', html)
         self.assertNotIn('>Roles<', html.replace('</i> Roles<', '>Roles<'))
 

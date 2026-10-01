@@ -83,7 +83,7 @@ class ManualEntryReportTests(TestCase):
         self.assertTrue(build_excel(data, 'Informe').startswith(b'PK'))
 
     def test_shift_list_and_detail_pages(self):
-        """Detalle de turnos: listado por apertura y, por turno, quién marcó y a qué hora."""
+        """Detalle de colaciones: listado por apertura y, por turno, quién marcó y a qué hora."""
         user = get_user_model().objects.create_user(
             email='g@g.cl', password='x', first_name='G', last_name='G', role=Role.objects.get(code='gerente'))
         self.client.force_login(user)

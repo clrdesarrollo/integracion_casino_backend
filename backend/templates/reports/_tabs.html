@@ -1,0 +1,12 @@
+{# Encabezado común de Informes: título + pestañas según los permisos del rol #}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+  <h1 class="page-title"><i class="bi bi-file-earmark-bar-graph"></i> Informes</h1>
+  <ul class="nav nav-pills">
+    {% if user.caps.reports %}
+    <li class="nav-item"><a class="nav-link {% if tab == 'report' %}active{% endif %}" href="{% url 'reports:report' %}"><i class="bi bi-file-earmark-bar-graph"></i> Informe de colaciones</a></li>
+    {% endif %}
+    {% if user.caps.shifts %}
+    <li class="nav-item"><a class="nav-link {% if tab == 'shifts' %}active{% endif %}" href="{% url 'reports:shift_list' %}"><i class="bi bi-clock-history"></i> Detalle de colaciones</a></li>
+    {% endif %}
+  </ul>
+</div>

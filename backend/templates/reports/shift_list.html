@@ -1,9 +1,9 @@
 {% extends 'base.html' %}
-{% block title %}Detalle de turnos · Casino{% endblock %}
-{% block nav_shifts %}active{% endblock %}
+{% block title %}Detalle de colaciones · Informes · Casino{% endblock %}
+{% block nav_reports %}active{% endblock %}
 
 {% block content %}
-<h1 class="page-title mb-3">Detalle de turnos</h1>
+{% with tab='shifts' %}{% include 'reports/_tabs.html' %}{% endwith %}
 
 <div class="card shadow-sm mb-3">
   <div class="card-body">

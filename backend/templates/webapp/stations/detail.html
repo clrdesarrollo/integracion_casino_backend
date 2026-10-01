@@ -105,4 +105,65 @@
     </div>
   </div>
 </div>
+
+<h5 class="mt-4 mb-0">Comportamiento de este terminal</h5>
+<p class="ds-caption mb-0">Ajustes propios de esta estación: no afectan a los demás terminales.</p>
+<div class="card shadow-sm mt-3">
+  <div class="card-header bg-white fw-semibold"><i class="bi bi-clock"></i> Inicio y cierre automático de turnos
+    {% if station.auto_shifts %}<span class="badge bg-success ms-1">activo</span>{% else %}<span class="badge bg-secondary ms-1">desactivado</span>{% endif %}
+  </div>
+  <div class="card-body">
+    <div class="row g-3 align-items-center">
+      <div class="col-lg-8 ds-caption">
+        <p class="mb-1"><strong>Activado:</strong> el terminal abre cada turno al llegar su hora de inicio y lo cierra
+        al llegar su hora de término, sin prórroga ni pregunta. No hace falta que alguien lo inicie.</p>
+        <p class="mb-1"><strong>Desactivado:</strong> el operador inicia el turno desde la pantalla del terminal y,
+        al terminar el horario, corre la prórroga definida en Turnos y empresas.</p>
+        <p class="mb-0">Los turnos de ingreso manual no se abren nunca. Un turno que el operador cierra antes de tiempo
+        no se vuelve a abrir solo. También se cambia en el propio terminal (Configuración → Turnos).</p>
+      </div>
+      <div class="col-lg-4 text-lg-end">
+        <form method="post" action="{% url 'webapp:station_auto_shifts' station.pk %}">
+          {% csrf_token %}
+          {% if station.auto_shifts %}
+          <input type="hidden" name="auto_shifts" value="0">
+          <button type="submit" class="btn btn-outline-secondary"><i class="bi bi-hand-index"></i> Desactivar</button>
+          {% else %}
+          <input type="hidden" name="auto_shifts" value="1">
+          <button type="submit" class="btn btn-primary"><i class="bi bi-clock"></i> Activar inicio y cierre automático</button>
+          {% endif %}
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm mt-3 {% if station.test_mode %}border-warning{% endif %}">
+  <div class="card-header bg-white fw-semibold"><i class="bi bi-cone-striped"></i> Modo de pruebas
+    {% if station.test_mode %}<span class="badge bg-warning ms-1">activo</span>{% endif %}
+  </div>
+  <div class="card-body">
+    <div class="row g-3 align-items-center">
+      <div class="col-lg-8 ds-caption">
+        <p class="mb-1">Sirve para probar el lector facial, las tarjetas o el propio terminal sin afectar los datos.
+        Mientras está activo, el terminal <strong>ignora las marcaciones</strong>: las muestra en pantalla
+        como prueba, pero no registra colaciones, no las cuenta en los informes ni gasta tarjetas de visita.</p>
+        <p class="mb-0">También se puede activar en el propio terminal (Configuración → Turnos). Recuerda desactivarlo al terminar.</p>
+      </div>
+      <div class="col-lg-4 text-lg-end">
+        <form method="post" action="{% url 'webapp:station_test_mode' station.pk %}"
+              {% if not station.test_mode %}onsubmit="return confirm('¿Activar el modo de pruebas? El terminal dejará de registrar colaciones hasta que lo desactives.');"{% endif %}>
+          {% csrf_token %}
+          {% if station.test_mode %}
+          <input type="hidden" name="test_mode" value="0">
+          <button type="submit" class="btn btn-primary"><i class="bi bi-check-circle"></i> Desactivar modo de pruebas</button>
+          {% else %}
+          <input type="hidden" name="test_mode" value="1">
+          <button type="submit" class="btn btn-outline-secondary"><i class="bi bi-cone-striped"></i> Activar modo de pruebas</button>
+          {% endif %}
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
 {% endblock %}

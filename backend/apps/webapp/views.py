@@ -573,7 +573,7 @@ def station_auto_shifts(request, pk):
         else:
             messages.success(request, 'Inicio y cierre automático desactivado: el operador inicia cada '
                                       'turno y al terminar su horario corre la prórroga.')
-    return redirect('webapp:schedule_list', pk=station.pk)
+    return redirect('webapp:station_detail', pk=station.pk)
 
 
 @capability_required('config')
@@ -593,7 +593,7 @@ def station_test_mode(request, pk):
         else:
             messages.success(request, 'Modo de pruebas desactivado: el terminal vuelve a registrar '
                                       'las marcaciones.')
-    return redirect('webapp:schedule_list', pk=station.pk)
+    return redirect('webapp:station_detail', pk=station.pk)
 
 
 @capability_required('config')

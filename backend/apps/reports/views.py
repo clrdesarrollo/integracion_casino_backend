@@ -128,7 +128,7 @@ def report_excel(request):
 
 
 # =====================================================================
-#  Detalle de turnos: cada apertura, cómo se abrió/cerró y quién marcó
+#  Detalle de colaciones: cada apertura, cómo se abrió/cerró y quién marcó
 # =====================================================================
 def _event_count(status):
     return Count('events', filter=Q(events__status=status))

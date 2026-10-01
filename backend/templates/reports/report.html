@@ -1,9 +1,9 @@
 {% extends 'base.html' %}
-{% block title %}Reportería · Casino{% endblock %}
+{% block title %}Informes · Casino{% endblock %}
 {% block nav_reports %}active{% endblock %}
 
 {% block content %}
-<h1 class="page-title mb-3">Reportería de colaciones</h1>
+{% with tab='report' %}{% include 'reports/_tabs.html' %}{% endwith %}
 
 <div class="card shadow-sm mb-3">
   <div class="card-body">

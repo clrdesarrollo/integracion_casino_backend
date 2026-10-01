@@ -5,4 +5,4 @@ class ReportsConfig(AppConfig):
     default_auto_field = 'django.db.models.BigAutoField'
     name = 'backend.apps.reports'
     label = 'reports'
-    verbose_name = 'Reportería'
+    verbose_name = 'Informes'
