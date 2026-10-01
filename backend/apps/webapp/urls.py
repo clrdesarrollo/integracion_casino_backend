@@ -54,4 +54,5 @@ urlpatterns = [
 
     # Personas de la estación con su colación asignada (solo lectura: viene de HikCentral)
     path('estaciones/<int:pk>/personas/', views.person_list, name='person_list'),
+    path('personas/<int:pk>/foto/', views.person_photo, name='person_photo'),
 ]

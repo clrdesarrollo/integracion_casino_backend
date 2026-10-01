@@ -294,6 +294,9 @@ class Person(models.Model):
         help_text='Campo personalizado «Colacion» de HikCentral. Vacío = sin definir '
                   '(el terminal la atiende como «todos los turnos»).',
     )
+    # SHA-1 de la foto de perfil respaldada (PersonPhoto); vacío = sin foto. El terminal
+    # manda el hash en cada sincronización y solo sube la imagen cuando no coincide.
+    photo_hash = models.CharField('hash de la foto', max_length=40, blank=True, default='')
     updated_at = models.DateTimeField('actualizado', auto_now=True)
 
     class Meta:
@@ -321,6 +324,53 @@ class Person(models.Model):
         if self.meal_policy is None:
             return 'Sin definir'
         return self.MealPolicy(self.meal_policy).label
+
+    @property
+    def photo_url(self):
+        """URL de la foto de perfil ('' si no tiene). El hash la versiona para la caché."""
+        return self.photo_url_for(self.pk, self.photo_hash) if self.photo_hash else ''
+
+    @staticmethod
+    def photo_url_for(pk, photo_hash):
+        from django.urls import reverse  # import diferido: los modelos no dependen de las rutas
+        return f"{reverse('webapp:person_photo', args=[pk])}?v={photo_hash[:12]}"
+
+    @classmethod
+    def attach_photos_to_events(cls, events):
+        """
+        Pone en cada marcación `person_photo_url`: la foto de la FICHA de quien marcó ('' si
+        no tiene o es una tarjeta de visita). Una sola consulta para toda la lista.
+        """
+        events = list(events)
+        for ev in events:
+            ev.person_photo_url = ''
+        wanted = [ev for ev in events if not ev.is_visitor]
+        if not wanted:
+            return events
+        rows = cls.objects.filter(
+            station_id__in={ev.station_id for ev in wanted},
+            employee_no__in={ev.employee_no for ev in wanted},
+        ).exclude(photo_hash='').values_list('station_id', 'employee_no', 'pk', 'photo_hash')
+        urls = {(st, no): cls.photo_url_for(pk, h) for st, no, pk, h in rows}
+        for ev in wanted:
+            ev.person_photo_url = urls.get((ev.station_id, ev.employee_no), '')
+        return events
+
+
+class PersonPhoto(models.Model):
+    """
+    Foto de perfil de la persona (la de HikCentral, que el terminal descarga y respalda
+    aquí). Vive en su propia tabla para que las consultas de personas no carguen la imagen.
+    """
+
+    person = models.OneToOneField(Person, on_delete=models.CASCADE, related_name='photo')
+    data = models.BinaryField('foto', editable=False)
+    updated_at = models.DateTimeField('actualizado', auto_now=True)
+
+    class Meta:
+        db_table = 'tb_person_photo'
+        verbose_name = 'foto de persona'
+        verbose_name_plural = 'fotos de personas'
 
 
 class Shift(models.Model):

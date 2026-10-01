@@ -412,6 +412,68 @@ class ShiftOvertimeConfigTests(TestCase):
         self._sync({'persons': [{'employee_no': '1-9', 'name': 'Sin', 'meal_policy': None}]})
         self.assertIsNone(Person.objects.get(employee_no='1-9').meal_policy)
 
+    def test_person_photo_is_requested_then_stored(self):
+        """El terminal manda el hash; el servidor pide la foto solo si le falta o cambió."""
+        import hashlib
+        raw = b'\xff\xd8\xff\xe0 foto de perfil'
+        digest = hashlib.sha1(raw).hexdigest()
+        base = {'employee_no': '1-9', 'name': 'Con foto'}
+
+        # 1) solo el hash: el servidor no la tiene y la pide
+        body = self._sync({'persons': [
+            {**base, 'photo_hash': digest},
+            {'employee_no': '2-7', 'name': 'Sin foto', 'photo_hash': None},
+            {'employee_no': '5-1', 'name': 'Terminal antiguo'},
+        ]})
+        self.assertEqual(body['photos_needed'], ['1-9'])
+        self.assertEqual(Person.objects.get(employee_no='1-9').photo_hash, '')
+
+        # 2) el terminal sube la imagen: queda guardada con su hash
+        body = self._sync({'persons': [
+            {**base, 'photo_hash': digest, 'photo_b64': base64.b64encode(raw).decode()},
+        ]})
+        self.assertNotIn('photos_needed', body)
+        person = Person.objects.get(employee_no='1-9')
+        self.assertEqual(person.photo_hash, digest)
+        self.assertEqual(bytes(person.photo.data), raw)
+
+        # 3) las sincronizaciones siguientes, con el mismo hash, ya no piden nada; y un
+        #    terminal que deja de informar la foto no borra la respaldada
+        self.assertNotIn('photos_needed', self._sync({'persons': [{**base, 'photo_hash': digest}]}))
+        self._sync({'persons': [{**base, 'photo_hash': None}]})
+        self.assertEqual(Person.objects.get(employee_no='1-9').photo_hash, digest)
+
+        # 4) cambió la foto en HikCentral: hash distinto → se vuelve a pedir
+        body = self._sync({'persons': [{**base, 'photo_hash': 'a' * 40}]})
+        self.assertEqual(body['photos_needed'], ['1-9'])
+
+    def test_person_photo_view_and_event_urls(self):
+        """La foto se sirve con sesión iniciada y las marcaciones llevan su URL."""
+        from backend.apps.core.models import PersonPhoto, User
+        person = Person.objects.create(station=self.station, employee_no='1-9', name='Con foto',
+                                       photo_hash='b' * 40)
+        PersonPhoto.objects.create(person=person, data=b'jpeg')
+        Person.objects.create(station=self.station, employee_no='2-7', name='Sin foto')
+        url = person.photo_url
+
+        web = self.client_class()
+        self.assertEqual(web.get(url).status_code, 302)   # sin sesión: al login
+        web.force_login(User.objects.create_user(
+            email='ver@test.cl', password='x', role=Role.objects.first()))
+        resp = web.get(url)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.content, b'jpeg')
+
+        now = timezone.now()
+        events = [
+            AccessEvent(station=self.station, remote_id=1, employee_no='1-9', event_time=now, status='Ok'),
+            AccessEvent(station=self.station, remote_id=2, employee_no='2-7', event_time=now, status='Ok'),
+            AccessEvent(station=self.station, remote_id=3, employee_no='1-9', event_time=now, status='Ok',
+                        is_visitor=True),
+        ]
+        Person.attach_photos_to_events(events)
+        self.assertEqual([e.person_photo_url for e in events], [url, '', ''])
+
 
 class VisitorEventsViewTests(TestCase):
     """Visor de colaciones de visitas (pagos adicionales)."""

@@ -57,7 +57,8 @@
   .mon-bar { width:6px; flex:0 0 auto; }
   .mon-av { width:150px; height:150px; border-radius:var(--ds-radius-lg); background:var(--ds-dark-raised); align-self:center;
             margin:0 var(--ds-space-lg) 0 22px; flex:0 0 auto; display:flex; align-items:center; justify-content:center;
-            font-weight:500; font-size:3.2rem; color:var(--ds-dark-mute); }
+            font-weight:500; font-size:3.2rem; color:var(--ds-dark-mute); position:relative; overflow:hidden; }
+  .mon-av img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
   .mon-info { flex:1 1 auto; min-width:0; align-self:center; padding:18px 22px 18px 6px; }
   .mon-visit { display:inline-block; font-size:var(--ds-label-size); font-weight:400; padding:var(--ds-space-xs) var(--ds-space-md);
                border-radius:var(--ds-radius-pill); background:var(--ds-dark-info-bg); color:var(--ds-primary-subdued);
@@ -198,7 +199,10 @@
     card.dataset.station = ev.station_id != null ? String(ev.station_id) : '';
     card.innerHTML =
       '<div class="mon-bar" style="background:' + st.fg + '"></div>' +
-      '<div class="mon-av">' + esc(initials(ev.person_name)) + '</div>' +
+      // la foto de la ficha tapa las iniciales; si no carga se quita y quedan las iniciales
+      '<div class="mon-av">' + esc(initials(ev.person_name)) +
+        (ev.photo_url ? '<img src="' + encodeURI(ev.photo_url) + '" alt="" onerror="this.remove()">' : '') +
+      '</div>' +
       '<div class="mon-info">' +
         (ev.is_visitor ? '<div><span class="mon-visit">VISITA</span></div>' : '') +
         '<div class="mon-name">' + esc(ev.person_name) + '</div>' +

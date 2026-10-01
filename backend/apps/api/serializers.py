@@ -9,6 +9,20 @@ from backend.apps.core.models import AccessEvent
 DATETIME_INPUT_FORMATS = ['iso-8601', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%d %H:%M:%S']
 
 
+def _clean_photo_b64(value):
+    """Se descarta una foto ilegible o desmedida en vez de rechazar todo el lote."""
+    if not value:
+        return ''
+    # ~4/3 del tamaño binario: 1.5 MB de base64 ≈ 1.1 MB de imagen, de sobra para un JPEG
+    if len(value) > 1_500_000:
+        return ''
+    try:
+        base64.b64decode(value, validate=True)
+    except (binascii.Error, ValueError):
+        return ''
+    return value
+
+
 class EnrollSerializer(serializers.Serializer):
     """Credenciales de enrolado que envía el terminal (ID numérico + contraseña)."""
 
@@ -28,6 +42,16 @@ class PersonSyncSerializer(serializers.Serializer):
     meal_policy = serializers.IntegerField(
         min_value=0, max_value=2, required=False, allow_null=True, default=None,
     )
+    # Foto de perfil (la de HikCentral): el terminal manda siempre el SHA-1 de la que tiene
+    # guardada, y la imagen solo cuando el servidor se la pidió (photos_needed). null = el
+    # terminal no informa foto (versión antigua, o la persona no tiene).
+    photo_hash = serializers.CharField(
+        max_length=40, required=False, allow_blank=True, allow_null=True, default=None,
+    )
+    photo_b64 = serializers.CharField(required=False, allow_blank=True, allow_null=True, default='')
+
+    def validate_photo_b64(self, value):
+        return _clean_photo_b64(value)
 
 
 class ShiftSyncSerializer(serializers.Serializer):
@@ -70,17 +94,7 @@ class EventSyncSerializer(serializers.Serializer):
     photo_b64 = serializers.CharField(required=False, allow_blank=True, allow_null=True, default='')
 
     def validate_photo_b64(self, value):
-        """Se descarta una foto ilegible o desmedida en vez de rechazar todo el lote."""
-        if not value:
-            return ''
-        # ~4/3 del tamaño binario: 1.5 MB de base64 ≈ 1.1 MB de imagen, de sobra para un JPEG
-        if len(value) > 1_500_000:
-            return ''
-        try:
-            base64.b64decode(value, validate=True)
-        except (binascii.Error, ValueError):
-            return ''
-        return value
+        return _clean_photo_b64(value)
 
 
 class ScheduleConfigSerializer(serializers.Serializer):

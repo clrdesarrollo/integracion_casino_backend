@@ -32,9 +32,13 @@ def active_shifts() -> list:
 
 
 def serialize_event(ev, station_name: str = '') -> dict:
-    """Representación liviana de una marcación para las tarjetas del monitor (sin foto)."""
+    """
+    Representación liviana de una marcación para las tarjetas del monitor. La foto no viaja:
+    va la URL de la foto de la ficha, si antes se llamó a Person.attach_photos_to_events.
+    """
     lt = timezone.localtime(ev.event_time)
     return {
+        'photo_url': getattr(ev, 'person_photo_url', ''),
         'id': ev.id,
         'remote_id': ev.remote_id,
         'station_id': ev.station_id,
@@ -60,6 +64,11 @@ def broadcast_events(events, station_name: str = '') -> None:
     layer = get_channel_layer()
     if layer is None:
         return
+    try:
+        from backend.apps.core.models import Person  # import diferido: evita ciclos al cargar apps
+        Person.attach_photos_to_events(events)
+    except Exception:
+        pass   # sin foto la tarjeta muestra las iniciales
     for ev in events:
         try:
             async_to_sync(layer.group_send)(MONITOR_GROUP, {

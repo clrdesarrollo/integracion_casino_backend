@@ -97,7 +97,10 @@
             {% for ev in ultimos_eventos %}
             <tr>
               <td class="text-nowrap">{{ ev.event_time|date:"d-m H:i" }}</td>
-              <td>{{ ev.person_name|default:ev.employee_no }}</td>
+              <td>
+                {% if ev.person_photo_url %}<img src="{{ ev.person_photo_url }}" alt="" loading="lazy" class="dash-thumb">{% endif %}
+                {{ ev.person_name|default:ev.employee_no }}
+              </td>
               <td>{{ ev.company|default:"—" }}</td>
               <td>{{ ev.station.name }}</td>
               <td>
@@ -120,6 +123,7 @@
 <style>
   @keyframes dashIn { from { background:var(--ds-info-bg); } to { background:transparent; } }
   #dashEvents tr.is-new { animation: dashIn 1.8s ease-out; }
+  .dash-thumb { width:26px; height:26px; border-radius:50%; object-fit:cover; margin-right:6px; vertical-align:middle; }
 </style>
 
 <script>
@@ -153,7 +157,8 @@
     tr.className = 'is-new';
     tr.innerHTML =
       '<td class="text-nowrap">' + esc(ev.short_when || (ev.date_text + ' ' + ev.time_text)) + '</td>' +
-      '<td>' + esc(ev.person_name) + '</td>' +
+      '<td>' + (ev.photo_url ? '<img src="' + encodeURI(ev.photo_url) + '" alt="" class="dash-thumb" onerror="this.remove()">' : '') +
+        esc(ev.person_name) + '</td>' +
       '<td>' + esc(ev.company || '—') + '</td>' +
       '<td>' + esc(ev.station || '') + '</td>' +
       '<td><span class="badge ' + b[0] + '">' + esc(b[1]) + '</span></td>';

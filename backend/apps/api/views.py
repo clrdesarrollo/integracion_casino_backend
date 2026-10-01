@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import logging
 
 from django.db import connections, transaction
@@ -13,7 +14,9 @@ from rest_framework.views import APIView
 from backend.apps.api.permissions import HasStationAPIKey
 from backend.apps.api.serializers import EnrollSerializer, SyncSerializer
 from backend.apps.core.config_sync import reconcile
-from backend.apps.core.models import AccessEvent, Person, Shift, Station, StationAPIKey
+from backend.apps.core.models import (
+    AccessEvent, Person, PersonPhoto, Shift, Station, StationAPIKey,
+)
 from backend.apps.realtime.broadcast import broadcast_events
 
 logger = logging.getLogger(__name__)
@@ -162,10 +165,11 @@ class SyncView(APIView):
                   'shifts': {'created': 0, 'updated': 0},
                   'events': {'created': 0, 'updated': 0}}
         created_events = []  # solo las marcaciones nuevas se difunden al monitor en vivo
+        photos_needed = []   # personas cuya foto el terminal tiene y aquí falta o es otra
 
         with transaction.atomic():
             for p in data['persons']:
-                _, created = Person.objects.update_or_create(
+                person, created = Person.objects.update_or_create(
                     station=station,
                     employee_no=p['employee_no'],
                     defaults={
@@ -178,6 +182,19 @@ class SyncView(APIView):
                     },
                 )
                 result['persons']['created' if created else 'updated'] += 1
+
+                # Foto de perfil: si viene la imagen se guarda (el hash se calcula acá, no
+                # se confía en el declarado); si solo viene el hash y no coincide, se pide.
+                # Un terminal sin foto para la persona no borra la que ya estaba respaldada.
+                photo_b64 = p.get('photo_b64') or ''
+                if photo_b64:
+                    raw = base64.b64decode(photo_b64)
+                    digest = hashlib.sha1(raw).hexdigest()
+                    if digest != person.photo_hash:
+                        PersonPhoto.objects.update_or_create(person=person, defaults={'data': raw})
+                        Person.objects.filter(pk=person.pk).update(photo_hash=digest)
+                elif p.get('photo_hash') and p['photo_hash'].lower() != person.photo_hash:
+                    photos_needed.append(person.employee_no)
 
             for s in data['shifts']:
                 # El uid es la clave estable (sobrevive a que se recree la base del
@@ -259,4 +276,6 @@ class SyncView(APIView):
         body = {'validate': True, 'message': 'Sincronización realizada', 'result': result}
         if config_out is not None:
             body['config'] = config_out
+        if photos_needed:
+            body['photos_needed'] = photos_needed
         return Response(body, status=status.HTTP_200_OK)

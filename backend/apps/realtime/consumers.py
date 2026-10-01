@@ -5,7 +5,7 @@ from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
 from django.utils import timezone
 
-from backend.apps.core.models import AccessEvent, Shift
+from backend.apps.core.models import AccessEvent, Person, Shift
 from backend.apps.realtime.broadcast import MONITOR_GROUP, active_shifts, serialize_event
 
 
@@ -86,13 +86,13 @@ class MonitorConsumer(AsyncWebsocketConsumer):
         open_ids = list(Shift.objects.filter(ended_at__isnull=True).values_list('id', flat=True))
         if open_ids:
             recent_qs = (
-                AccessEvent.objects.select_related('station')
+                AccessEvent.objects.select_related('station').defer('photo')
                 .filter(shift_id__in=open_ids)
                 .order_by('-event_time')[:self.RECENT_LIMIT]
             )
             recent = [
                 serialize_event(e, e.station.name if e.station_id else '')
-                for e in reversed(list(recent_qs))
+                for e in reversed(Person.attach_photos_to_events(recent_qs))
             ]
         else:
             recent = []

@@ -14,7 +14,8 @@ from django.utils.dateparse import parse_date
 from django.http import Http404, HttpResponse, JsonResponse
 
 from backend.apps.core.models import (
-    AccessEvent, Person, Role, Shift, ShiftSchedule, Station, StationAPIKey, Visit, VisitorCard,
+    AccessEvent, Person, PersonPhoto, Role, Shift, ShiftSchedule, Station, StationAPIKey, Visit,
+    VisitorCard,
 )
 from backend.apps.core.access import CAPABILITIES
 from backend.apps.realtime.broadcast import active_shifts
@@ -69,7 +70,8 @@ def dashboard(request):
         'total_eventos': AccessEvent.objects.count(),
         'por_estacion': por_estacion,
         'estaciones': Station.objects.all(),
-        'ultimos_eventos': AccessEvent.objects.select_related('station')[:15],
+        'ultimos_eventos': Person.attach_photos_to_events(
+            AccessEvent.objects.select_related('station').defer('photo')[:15]),
         'mes_actual': month_start,
         'ahora': timezone.localtime(),
         'umbral_offline': timezone.now() - timedelta(hours=24),
@@ -633,6 +635,20 @@ def person_list(request, pk):
         'counts': counts,
         'policies': Person.MealPolicy.choices,
     })
+
+
+@login_required
+def person_photo(request, pk):
+    """
+    Foto de perfil de una persona (la de HikCentral, respaldada por el terminal). La ve
+    cualquier usuario con sesión: acompaña a las marcaciones del panel y del monitor.
+    """
+    photo = get_object_or_404(PersonPhoto, person_id=pk)
+    # La URL lleva el hash de la foto (?v=): si cambia la foto cambia la URL, así que
+    # el navegador puede cachearla sin mostrar una antigua.
+    response = HttpResponse(bytes(photo.data), content_type='image/jpeg')
+    response['Cache-Control'] = 'private, max-age=604800'
+    return response
 
 
 # =====================================================================
