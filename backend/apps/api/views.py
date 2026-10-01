@@ -288,7 +288,9 @@ class SyncView(APIView):
             if data.get('config') is not None:
                 config_out = reconcile(station, data['config'])
 
-            station.touch_sync()
+            # La IP que informa el propio terminal es la de su red local; la de origen de
+            # la petición puede ser la de un proxy o la del puente de Docker.
+            station.touch_sync(ip=data.get('local_ip') or request.META.get('REMOTE_ADDR', ''))
 
         # Difusión al monitor en vivo tras confirmar la transacción (nunca rompe la ingesta).
         if created_events:

@@ -74,6 +74,7 @@ def serialize_config(station: Station) -> dict:
         'updated_at': format_stamp(station.config_updated_at),
         'shift_overtime_minutes': station.shift_overtime_minutes,
         'test_mode': station.test_mode,
+        'auto_shifts': station.auto_shifts,
         'schedules': schedules,
         'visitor_cards': cards,
     }
@@ -136,6 +137,11 @@ def apply_config(station: Station, data: dict, updated_at) -> None:
     if overtime is not None:
         station.shift_overtime_minutes = max(1, min(180, int(overtime)))
         fields.append('shift_overtime_minutes')
+
+    # Igual con el inicio/cierre automático: un terminal antiguo no lo manda.
+    if data.get('auto_shifts') is not None:
+        station.auto_shifts = bool(data['auto_shifts'])
+        fields.append('auto_shifts')
 
     # Un terminal antiguo no conoce el modo de pruebas: se conserva el del servidor.
     if data.get('test_mode') is not None:

@@ -142,6 +142,8 @@ class ConfigSyncSerializer(serializers.Serializer):
     )
     # Modo de pruebas (el terminal ignora las marcaciones). Un terminal antiguo no lo manda.
     test_mode = serializers.BooleanField(required=False, allow_null=True, default=None)
+    # Inicio y cierre automático de turnos por horario. Un terminal antiguo no lo manda.
+    auto_shifts = serializers.BooleanField(required=False, allow_null=True, default=None)
 
 
 class CardGrantUsedSerializer(serializers.Serializer):
@@ -166,6 +168,9 @@ class CardGrantLocalSerializer(serializers.Serializer):
 class SyncSerializer(serializers.Serializer):
     """Payload de sincronización que sube la estación (todo es opcional)."""
 
+    # IP del terminal en su red local (la de la interfaz con la que llega al servidor).
+    # Un terminal antiguo no la manda: se usa la dirección de origen de la petición.
+    local_ip = serializers.IPAddressField(required=False, allow_blank=True, allow_null=True, default='')
     persons = PersonSyncSerializer(many=True, required=False, default=list)
     # true = `persons` es la lista COMPLETA del terminal: lo que no venga se elimina aquí.
     # Un terminal antiguo no lo manda y nunca borra nada.

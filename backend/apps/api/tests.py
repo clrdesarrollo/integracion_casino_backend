@@ -85,6 +85,30 @@ class ConfigSyncTests(TestCase):
         self.station.refresh_from_db()
         self.assertFalse(self.station.test_mode)
 
+    def test_auto_shifts_travels_both_ways(self):
+        """Inicio/cierre automático de turnos: configuración compartida, como el modo de pruebas."""
+        old = timezone.now() - timedelta(minutes=10)
+        self._sync({'config': self._config(_stamp(old))})
+
+        from django.contrib.auth import get_user_model
+        web = self.client_class()
+        web.force_login(get_user_model().objects.create_user(
+            email='a@a.cl', password='x', first_name='A', last_name='A', role=Role.objects.get(code='admin')))
+        web.post(f'/estaciones/{self.station.pk}/turnos-automaticos/', {'auto_shifts': '1'})
+        body = self._sync({'config': self._config(_stamp(old))})
+        self.assertTrue(body['config']['auto_shifts'])
+
+        # desactivado en el terminal (edición más nueva): sube al servidor
+        newer = timezone.now() + timedelta(minutes=1)
+        self._sync({'config': {**self._config(_stamp(newer)), 'auto_shifts': False}})
+        self.station.refresh_from_db()
+        self.assertFalse(self.station.auto_shifts)
+
+        # el cierre por horario cuenta como término automático
+        self._sync({'shifts': [{'remote_id': 9, 'uid': 'h-1', 'name': 'Almuerzo', 'started_at': '2026-08-17T12:00:00', 'auto': True, 'ended_at': '2026-08-17T14:00:00',
+                                           'end_reason': 'horario'}]})
+        self.assertEqual(Shift.objects.get(uid='h-1').end_mode, 'auto')
+
     def test_server_config_is_returned_when_newer(self):
         old = timezone.now() - timedelta(minutes=10)
         self._sync({'config': self._config(_stamp(old))})
@@ -490,6 +514,17 @@ class ShiftOvertimeConfigTests(TestCase):
         # 4) cambió la foto en HikCentral: hash distinto → se vuelve a pedir
         body = self._sync({'persons': [{**base, 'photo_hash': 'a' * 40}]})
         self.assertEqual(body['photos_needed'], ['1-9'])
+
+    def test_terminal_ip_is_recorded(self):
+        """La IP local que informa el terminal queda en la estación; sin ella, la de origen."""
+        self._sync({})
+        self.station.refresh_from_db()
+        self.assertEqual(self.station.last_ip, '127.0.0.1')    # terminal antiguo: origen de la petición
+        self._sync({'local_ip': '192.168.1.179'})
+        self.station.refresh_from_db()
+        self.assertEqual(self.station.last_ip, '192.168.1.179')
+        resp = self.client.post('/api/sync/', {'local_ip': 'no-es-una-ip'}, format='json')
+        self.assertEqual(resp.status_code, 400)
 
     def test_persons_complete_removes_the_missing_ones(self):
         """Lista completa del terminal: quien ya no viene (baja en HikCentral) se elimina."""

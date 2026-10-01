@@ -43,7 +43,7 @@
         <hr>
         <p class="small mb-0 text-muted">
           Última sincronización:
-          {% if station.last_sync_at %}{{ station.last_sync_at|date:"d-m-Y H:i" }}{% else %}nunca{% endif %}
+          {% if station.last_sync_at %}{{ station.last_sync_at|date:"d-m-Y H:i" }}{% else %}nunca{% endif %}{% if station.last_ip %} · IP del terminal: <code>{{ station.last_ip }}</code>{% endif %}
         </p>
       </div>
     </div>

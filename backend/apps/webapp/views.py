@@ -557,6 +557,26 @@ def schedule_list(request, pk):
 
 
 @capability_required('config')
+def station_auto_shifts(request, pk):
+    """
+    Activa o desactiva el inicio y cierre automático de turnos de la estación. Es
+    configuración compartida: el terminal la recibe de inmediato o en su próxima sincronización.
+    """
+    station = get_object_or_404(Station, pk=pk)
+    if request.method == 'POST':
+        station.auto_shifts = request.POST.get('auto_shifts') == '1'
+        station.save(update_fields=['auto_shifts'])
+        station.touch_config()
+        if station.auto_shifts:
+            messages.success(request, 'Inicio y cierre automático activado: el terminal abrirá y cerrará '
+                                      'cada turno a su hora.')
+        else:
+            messages.success(request, 'Inicio y cierre automático desactivado: el operador inicia cada '
+                                      'turno y al terminar su horario corre la prórroga.')
+    return redirect('webapp:schedule_list', pk=station.pk)
+
+
+@capability_required('config')
 def station_test_mode(request, pk):
     """
     Activa o desactiva el modo de pruebas de la estación. Es configuración compartida: el

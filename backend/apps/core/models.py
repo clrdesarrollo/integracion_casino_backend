@@ -192,6 +192,9 @@ class Station(models.Model):
     is_active = models.BooleanField('activa', default=True)
     created_at = models.DateTimeField('creada', auto_now_add=True)
     last_sync_at = models.DateTimeField('última sincronización', blank=True, null=True)
+    # Dirección IP del terminal en su red local, tal como la informó en su última
+    # sincronización (sirve para ubicarlo y conectarse por SSH al darle soporte).
+    last_ip = models.CharField('dirección IP', max_length=45, blank=True, default='')
     # Marca de tiempo de la última edición de la configuración compartida (turnos
     # programados + empresas autorizadas + tarjetas de visita). La misma configuración se
     # edita en la app del terminal y aquí: en cada sync gana la marca más reciente.
@@ -204,6 +207,12 @@ class Station(models.Model):
         help_text='Si empieza el turno siguiente, el turno en curso se cierra de inmediato '
                   'sin esperar esta prórroga.',
     )
+
+    # Inicio y cierre automático de turnos: activado, el terminal abre cada turno al llegar
+    # su hora de inicio y lo cierra a su hora de término, sin prórroga ni intervención.
+    # Desactivado, el operador inicia el turno y al terminar el horario corre la prórroga.
+    # Configuración compartida: se cambia aquí o en el terminal.
+    auto_shifts = models.BooleanField('inicio y cierre automático de turnos', default=False)
 
     # Modo de pruebas: mientras está activo el terminal IGNORA las marcaciones (las muestra
     # en pantalla como prueba, pero no las registra, no las cuenta ni gasta tarjetas). Es
@@ -227,9 +236,13 @@ class Station(models.Model):
     def __str__(self):
         return self.name
 
-    def touch_sync(self):
+    def touch_sync(self, ip=''):
         self.last_sync_at = timezone.now()
-        self.save(update_fields=['last_sync_at'])
+        fields = ['last_sync_at']
+        if ip and ip != self.last_ip:
+            self.last_ip = ip
+            fields.append('last_ip')
+        self.save(update_fields=fields)
 
     def set_enroll_password(self, raw_password):
         self.enroll_password = make_password(raw_password)
@@ -414,6 +427,7 @@ class Shift(models.Model):
         MANUAL = 'manual', 'Cerrado por el operador'
         REPLACED = 'reemplazado', 'Reemplazado por el turno siguiente'
         EXPIRED = 'expirado', 'Cerrado al vencer la prórroga'
+        SCHEDULED = 'horario', 'Cerrado al terminar su horario'
         INTERRUPTED = 'interrumpido', 'Interrumpido (terminal caído)'
         MANUAL_ENTRY = 'ingreso_manual', 'Ingreso manual de colaciones'
 
@@ -493,6 +507,7 @@ class Shift(models.Model):
             self.EndReason.MANUAL: 'manual',
             self.EndReason.REPLACED: 'auto',
             self.EndReason.EXPIRED: 'auto',
+            self.EndReason.SCHEDULED: 'auto',
             self.EndReason.INTERRUPTED: 'interrumpido',
         }.get(self.end_reason, '')
 
