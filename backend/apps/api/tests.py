@@ -58,6 +58,33 @@ class ConfigSyncTests(TestCase):
         self.assertEqual(sorted(sched.company_names), ['', 'Casino Central'])
         self.assertEqual(VisitorCard.objects.get(station=self.station).card_no, '0012345678')
 
+    def test_test_mode_travels_both_ways(self):
+        """Modo de pruebas: se activa en el backoffice o en el terminal y llega al otro lado."""
+        old = timezone.now() - timedelta(minutes=10)
+        self._sync({'config': self._config(_stamp(old))})
+        self.station.refresh_from_db()
+        self.assertFalse(self.station.test_mode)
+
+        # activado en el backoffice (botón de la página de turnos): baja al terminal
+        from django.contrib.auth import get_user_model
+        web = self.client_class()
+        web.force_login(get_user_model().objects.create_user(
+            email='a@a.cl', password='x', first_name='A', last_name='A', role=Role.objects.get(code='admin')))
+        web.post(f'/estaciones/{self.station.pk}/modo-pruebas/', {'test_mode': '1'})
+        body = self._sync({'config': self._config(_stamp(old))})
+        self.assertTrue(body['config']['test_mode'])
+
+        # un terminal antiguo (no manda el campo) con una edición más nueva no lo apaga
+        newer = timezone.now() + timedelta(minutes=1)
+        self._sync({'config': self._config(_stamp(newer))})
+        self.station.refresh_from_db()
+        self.assertTrue(self.station.test_mode)
+
+        # desactivado en el terminal: sube al servidor
+        self._sync({'config': {**self._config(_stamp(newer + timedelta(minutes=1))), 'test_mode': False}})
+        self.station.refresh_from_db()
+        self.assertFalse(self.station.test_mode)
+
     def test_server_config_is_returned_when_newer(self):
         old = timezone.now() - timedelta(minutes=10)
         self._sync({'config': self._config(_stamp(old))})

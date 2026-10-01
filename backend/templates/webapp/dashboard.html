@@ -47,7 +47,7 @@
           <tbody>
             {% for e in estaciones %}
             <tr>
-              <td>{{ e.name }}</td>
+              <td>{{ e.name }}{% if e.test_mode %} <span class="badge bg-warning" title="El terminal está ignorando las marcaciones">modo de pruebas</span>{% endif %}</td>
               <td>{% if e.last_sync_at %}{{ e.last_sync_at|date:"d-m H:i" }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
               <td class="text-end">
                 {% if not e.is_active %}<span class="badge bg-secondary">inactiva</span>

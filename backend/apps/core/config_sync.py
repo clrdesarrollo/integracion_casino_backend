@@ -73,6 +73,7 @@ def serialize_config(station: Station) -> dict:
     return {
         'updated_at': format_stamp(station.config_updated_at),
         'shift_overtime_minutes': station.shift_overtime_minutes,
+        'test_mode': station.test_mode,
         'schedules': schedules,
         'visitor_cards': cards,
     }
@@ -135,6 +136,11 @@ def apply_config(station: Station, data: dict, updated_at) -> None:
     if overtime is not None:
         station.shift_overtime_minutes = max(1, min(180, int(overtime)))
         fields.append('shift_overtime_minutes')
+
+    # Un terminal antiguo no conoce el modo de pruebas: se conserva el del servidor.
+    if data.get('test_mode') is not None:
+        station.test_mode = bool(data['test_mode'])
+        fields.append('test_mode')
 
     station.config_updated_at = updated_at
     station.save(update_fields=fields)

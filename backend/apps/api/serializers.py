@@ -140,6 +140,8 @@ class ConfigSyncSerializer(serializers.Serializer):
     shift_overtime_minutes = serializers.IntegerField(
         min_value=1, max_value=180, required=False, allow_null=True,
     )
+    # Modo de pruebas (el terminal ignora las marcaciones). Un terminal antiguo no lo manda.
+    test_mode = serializers.BooleanField(required=False, allow_null=True, default=None)
 
 
 class CardGrantUsedSerializer(serializers.Serializer):

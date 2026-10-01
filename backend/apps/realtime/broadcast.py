@@ -47,6 +47,7 @@ def active_shifts() -> list:
             'station_id': st.pk,
             'station': st.name,
             'active': sh is not None,
+            'test_mode': st.test_mode,
             'shift_name': sh.name if sh else '',
             'started_text': timezone.localtime(sh.started_at).strftime('%H:%M') if sh else '',
         })

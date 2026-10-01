@@ -205,6 +205,11 @@ class Station(models.Model):
                   'sin esperar esta prórroga.',
     )
 
+    # Modo de pruebas: mientras está activo el terminal IGNORA las marcaciones (las muestra
+    # en pantalla como prueba, pero no las registra, no las cuenta ni gasta tarjetas). Es
+    # parte de la configuración compartida: se activa aquí o en el propio terminal.
+    test_mode = models.BooleanField('modo de pruebas', default=False)
+
     # Personas: cuándo el terminal leyó por última vez la lista de HikCentral, y si desde
     # el backoffice se le pidió volver a leerla (botón «Actualizar desde HikCentral»). La
     # solicitud queda pendiente hasta que el terminal confirma una lectura posterior.

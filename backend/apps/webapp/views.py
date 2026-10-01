@@ -70,6 +70,7 @@ def dashboard(request):
         'total_eventos': AccessEvent.objects.count(),
         'por_estacion': por_estacion,
         'estaciones': Station.objects.all(),
+        'en_pruebas': Station.objects.filter(test_mode=True),
         'ultimos_eventos': Person.attach_photos_to_events(
             AccessEvent.objects.select_related('station').defer('photo')[:15]),
         'mes_actual': month_start,
@@ -553,6 +554,26 @@ def schedule_list(request, pk):
         'known_companies': station.known_companies(),
         'overtime_form': overtime_form,
     })
+
+
+@capability_required('config')
+def station_test_mode(request, pk):
+    """
+    Activa o desactiva el modo de pruebas de la estación. Es configuración compartida: el
+    terminal la recibe de inmediato (canal WebSocket) o en su próxima sincronización.
+    """
+    station = get_object_or_404(Station, pk=pk)
+    if request.method == 'POST':
+        station.test_mode = request.POST.get('test_mode') == '1'
+        station.save(update_fields=['test_mode'])
+        station.touch_config()
+        if station.test_mode:
+            messages.warning(request, 'Modo de pruebas ACTIVADO: el terminal ignora las marcaciones '
+                                      'hasta que se desactive.')
+        else:
+            messages.success(request, 'Modo de pruebas desactivado: el terminal vuelve a registrar '
+                                      'las marcaciones.')
+    return redirect('webapp:schedule_list', pk=station.pk)
 
 
 @capability_required('config')

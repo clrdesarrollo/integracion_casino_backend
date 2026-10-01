@@ -44,6 +44,7 @@ urlpatterns = [
     path('turnos/', views.config_index, name='config_index'),
     path('estaciones/<int:pk>/turnos/', views.schedule_list, name='schedule_list'),
     path('estaciones/<int:pk>/turnos/nuevo/', views.schedule_create, name='schedule_create'),
+    path('estaciones/<int:pk>/modo-pruebas/', views.station_test_mode, name='station_test_mode'),
     path('estaciones/<int:pk>/turnos/<int:sid>/', views.schedule_edit, name='schedule_edit'),
     path('estaciones/<int:pk>/turnos/<int:sid>/eliminar/', views.schedule_delete, name='schedule_delete'),
 

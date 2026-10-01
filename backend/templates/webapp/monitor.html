@@ -33,6 +33,7 @@
   .shift-pill.on  { background:var(--ds-dark-success-bg); border-color:var(--ds-dark-success); color:var(--ds-dark-success); }
   .shift-pill.off { background:var(--ds-dark-danger-bg); border-color:var(--ds-dark-danger); color:var(--ds-dark-danger); font-weight:500; }
   .shift-pill .sp-name { font-weight:500; }
+  .shift-pill.test { background:var(--ds-dark-warning-bg); border-color:var(--ds-dark-warning); color:var(--ds-dark-warning); }
 
   .mon-stats { display:flex; gap:9px; flex-wrap:wrap; margin-top:11px; }
   .mon-stat { background:var(--ds-dark-canvas); border:1px solid var(--ds-dark-hairline); border-radius:var(--ds-radius-md); padding:7px 15px; min-width:92px; }
@@ -286,7 +287,7 @@
 
     // Al abrirse o cerrarse un turno la pantalla arranca limpia, igual que el kiosco.
     const key = rows.map(function (s) {
-      return s.station_id + ':' + (s.active ? s.shift_name + '@' + s.started_text : '-');
+      return s.station_id + ':' + (s.active ? s.shift_name + '@' + s.started_text : '-') + (s.test_mode ? ':test' : '');
     }).join('|');
     if (shiftKey !== null && shiftKey !== key) clearList();
     shiftKey = key;
@@ -296,6 +297,11 @@
 
     if (!rows.length) { shiftBar.innerHTML = '<span class="text-secondary small">Sin estaciones registradas.</span>'; return; }
     shiftBar.innerHTML = rows.map(function (s) {
+      if (s.test_mode) {
+        return '<span class="shift-pill test"><span class="sp-station">' + esc(s.station) + '</span>' +
+               '<span class="sp-name">MODO DE PRUEBAS</span>' +
+               '<span>· las marcaciones no se registran</span></span>';
+      }
       if (s.active) {
         return '<span class="shift-pill on"><span class="sp-station">' + esc(s.station) + '</span>' +
                '<span class="sp-name">' + esc(s.shift_name) + '</span>' +
