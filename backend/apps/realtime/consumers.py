@@ -3,7 +3,6 @@ import time
 
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
-from django.utils import timezone
 
 from backend.apps.core.models import AccessEvent, Person, Shift
 from backend.apps.realtime.broadcast import (
@@ -16,8 +15,8 @@ class MonitorConsumer(AsyncWebsocketConsumer):
     Monitor de colaciones en vivo. Requiere sesión iniciada (AuthMiddlewareStack) Y el
     permiso de ver colaciones emitidas: por aquí viajan las mismas marcaciones que la
     página, así que exigir solo sesión permitiría esquivar la restricción de la vista.
-    Al conectar envía un snapshot con las marcaciones recientes y los contadores del
-    día; luego recibe cada marcación nueva difundida por la ingesta.
+    Al conectar envía un snapshot con las marcaciones recientes y el turno abierto de cada
+    estación con su resumen; luego recibe cada marcación nueva difundida por la ingesta.
     """
 
     RECENT_LIMIT = 40
@@ -98,21 +97,8 @@ class MonitorConsumer(AsyncWebsocketConsumer):
             ]
         else:
             recent = []
-
-        today = timezone.localdate()
-        start = timezone.make_aware(
-            timezone.datetime(today.year, today.month, today.day),
-            timezone.get_current_timezone(),
-        )
-        today_qs = AccessEvent.objects.filter(event_time__gte=start)
-        counts = {
-            'served': today_qs.filter(status=AccessEvent.Status.OK).count(),
-            'duplicados': today_qs.filter(status=AccessEvent.Status.DUPLICADO).count(),
-            'sin_turno': today_qs.filter(status=AccessEvent.Status.SIN_TURNO).count(),
-            'no_autorizados': today_qs.filter(status=AccessEvent.Status.NO_AUTORIZADO).count(),
-            'visitas': today_qs.filter(status=AccessEvent.Status.OK, is_visitor=True).count(),
-        }
-        return {'events': recent, 'counts': counts, 'shifts': active_shifts()}
+        # los contadores son el resumen del turno abierto: viajan con cada estación
+        return {'events': recent, 'shifts': active_shifts()}
 
 
 class StationConsumer(AsyncWebsocketConsumer):

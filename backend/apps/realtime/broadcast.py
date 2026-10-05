@@ -30,16 +30,46 @@ def send_station_command(station_id, command: str) -> None:
 
 def active_shifts() -> list:
     """
-    Turno abierto de cada estación (el que no tiene término). El kiosco no puede operar
-    sin turno iniciado, así que una estación sin turno abierto está detenida.
+    Turno abierto de cada estación (el que no tiene término), con el resumen de sus
+    marcaciones. El kiosco no puede operar sin turno iniciado, así que una estación sin
+    turno abierto está detenida (y no tiene resumen: `counts` es None).
     Lo usan la página del monitor, su endpoint de sondeo y el snapshot del WebSocket.
     """
-    from backend.apps.core.models import Shift, Station  # import diferido: evita ciclos al cargar apps
+    # import diferido: evita ciclos al cargar apps
+    from django.db.models import Count, Q
+
+    from backend.apps.core.models import AccessEvent, Shift, Station
 
     abiertos = {
         s.station_id: s
         for s in Shift.objects.filter(ended_at__isnull=True).order_by('started_at')
     }
+
+    # La apertura original y sus reaperturas (quedó un comensal fuera) son el mismo
+    # servicio: el resumen del turno las suma. Las reaperturas apuntan a la original.
+    in_service = {}   # id de turno -> id de estación
+    if abiertos:
+        cond = Q()
+        for station_id, sh in abiertos.items():
+            cond |= Q(pk=sh.pk)
+            root = sh.reopened_from_uid or sh.uid
+            if root:   # los turnos antiguos sin uid no tienen cadena
+                cond |= Q(station_id=station_id) & (Q(uid=root) | Q(reopened_from_uid=root))
+        in_service = dict(Shift.objects.filter(cond).values_list('pk', 'station_id'))
+
+    S = AccessEvent.Status
+    counts = {sid: {'served': 0, 'duplicados': 0, 'no_autorizados': 0, 'visitas': 0}
+              for sid in abiertos}
+    rows = (AccessEvent.objects.filter(shift_id__in=in_service).values('shift_id')
+            .annotate(served=Count('id', filter=Q(status=S.OK)),
+                      duplicados=Count('id', filter=Q(status=S.DUPLICADO)),
+                      no_autorizados=Count('id', filter=Q(status=S.NO_AUTORIZADO)),
+                      visitas=Count('id', filter=Q(status=S.OK, is_visitor=True))))
+    for row in rows:
+        total = counts[in_service[row['shift_id']]]
+        for key in total:
+            total[key] += row[key]
+
     out = []
     for st in Station.objects.all():
         sh = abiertos.get(st.pk)
@@ -50,6 +80,10 @@ def active_shifts() -> list:
             'test_mode': st.test_mode,
             'shift_name': sh.name if sh else '',
             'started_text': timezone.localtime(sh.started_at).strftime('%H:%M') if sh else '',
+            # turnos que suman al resumen: el monitor cuenta al instante las marcaciones
+            # que llegan de ellos, antes de volver a consultar
+            'shift_ids': sorted(pk for pk, sid in in_service.items() if sid == st.pk),
+            'counts': counts.get(st.pk),
         })
     return out
 
@@ -65,6 +99,7 @@ def serialize_event(ev, station_name: str = '') -> dict:
         'id': ev.id,
         'remote_id': ev.remote_id,
         'station_id': ev.station_id,
+        'shift_id': ev.shift_id,
         'station': station_name,
         'employee_no': ev.employee_no,
         'person_name': ev.person_name or f'N° {ev.employee_no}',

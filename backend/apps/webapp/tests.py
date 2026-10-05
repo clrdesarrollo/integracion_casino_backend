@@ -13,7 +13,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from backend.apps.core.models import (
-    AccessEvent, Person, Role, Station, Visit, VisitorCard,
+    AccessEvent, Person, Role, Shift, Station, Visit, VisitorCard,
 )
 from backend.apps.webapp.permissions import DENIED_MESSAGE
 
@@ -684,3 +684,60 @@ class CustomRoleTests(TestCase):
         self.client.force_login(self.admin)
         self.client.post(f'/usuarios/{self.admin.pk}/eliminar/')
         self.assertTrue(User.objects.filter(pk=self.admin.pk).exists())
+
+
+class MonitorShiftSummaryTests(TestCase):
+    """
+    Los contadores del monitor son el resumen del turno en curso de cada estación, no del
+    día: lo que se marcó en un turno ya cerrado no suma, y una reapertura suma con su
+    apertura original porque es el mismo servicio.
+    """
+
+    def setUp(self):
+        self.casino = crear_usuario('monitor@test.cl', 'casino')
+        self.station = Station.objects.create(name='Casino 1', device_id=1000)
+        self.otra = Station.objects.create(name='Casino 2', device_id=1001)
+        now = timezone.now()
+        self.n = 0
+
+        desayuno = self._shift('des', now - timedelta(hours=5), ended=now - timedelta(hours=4))
+        self._events(desayuno, ['Ok'] * 5)            # turno ya cerrado: no cuenta
+
+        almuerzo = self._shift('alm', now - timedelta(hours=2), ended=now - timedelta(hours=1))
+        self._events(almuerzo, ['Ok', 'Ok', 'Duplicado', 'NoAutorizado'], visitor_first=True)
+        self.reapertura = self._shift('alm-r', now - timedelta(minutes=30), reopened_from='alm')
+        self._events(self.reapertura, ['Ok'])
+        self.almuerzo = almuerzo
+
+    def _shift(self, uid, started, ended=None, reopened_from=''):
+        return Shift.objects.create(station=self.station, uid=uid, remote_id=Shift.objects.count() + 1,
+                                    name='Almuerzo', started_at=started, ended_at=ended,
+                                    reopened_from_uid=reopened_from)
+
+    def _events(self, shift, statuses, visitor_first=False):
+        for i, status in enumerate(statuses):
+            self.n += 1
+            AccessEvent.objects.create(
+                station=self.station, shift=shift, uid=f'e{self.n}', remote_id=self.n,
+                employee_no=str(self.n), person_name='P', event_time=shift.started_at,
+                status=status, is_visitor=visitor_first and i == 0)
+
+    def test_resumen_del_turno_en_curso_con_su_reapertura(self):
+        self.client.force_login(self.casino)
+        shifts = {s['station']: s for s in self.client.get('/monitor/turnos/').json()['shifts']}
+
+        casino1 = shifts['Casino 1']
+        self.assertTrue(casino1['active'])
+        self.assertEqual(casino1['counts'], {'served': 3, 'duplicados': 1, 'no_autorizados': 1,
+                                             'visitas': 1})
+        self.assertEqual(casino1['shift_ids'], sorted([self.almuerzo.pk, self.reapertura.pk]))
+
+        # sin turno abierto no hay resumen
+        self.assertFalse(shifts['Casino 2']['active'])
+        self.assertIsNone(shifts['Casino 2']['counts'])
+
+    def test_la_marcacion_en_vivo_indica_su_turno(self):
+        from backend.apps.realtime.broadcast import serialize_event
+
+        ev = AccessEvent.objects.filter(shift=self.reapertura).first()
+        self.assertEqual(serialize_event(ev)['shift_id'], self.reapertura.pk)

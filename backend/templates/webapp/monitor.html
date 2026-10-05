@@ -108,12 +108,12 @@
       <span class="mon-hint">Consultando turnos…</span>
     </div>
 
-    <div class="mon-stats">
-      <div class="mon-stat"><div class="v is-success" id="cServed">0</div><div class="l">Colaciones hoy</div></div>
-      <div class="mon-stat"><div class="v is-warning" id="cDup">0</div><div class="l">Duplicados</div></div>
-      <div class="mon-stat"><div class="v is-mute" id="cSin">0</div><div class="l">Fuera de turno</div></div>
-      <div class="mon-stat"><div class="v is-danger" id="cNoAut">0</div><div class="l">No autorizados</div></div>
-      <div class="mon-stat"><div class="v is-info" id="cVis">0</div><div class="l">Visitas</div></div>
+    <!-- Resumen del turno abierto (con sus reaperturas) de las estaciones del filtro -->
+    <div class="mon-stats" title="Resumen del turno en curso">
+      <div class="mon-stat"><div class="v is-success" id="cServed">–</div><div class="l">Colaciones del turno</div></div>
+      <div class="mon-stat"><div class="v is-warning" id="cDup">–</div><div class="l">Duplicados</div></div>
+      <div class="mon-stat"><div class="v is-danger" id="cNoAut">–</div><div class="l">No autorizados</div></div>
+      <div class="mon-stat"><div class="v is-info" id="cVis">–</div><div class="l">Visitas</div></div>
     </div>
   </div>
 
@@ -137,7 +137,6 @@
   const grid = document.getElementById('grid');
   const emptyEl = document.getElementById('empty');
   const stationFilter = document.getElementById('stationFilter');
-  const counts = { served: 0, duplicados: 0, sin_turno: 0, no_autorizados: 0, visitas: 0 };
 
   // Los colores salen de los tokens del track oscuro del DESIGN.md; los
   // textos siguen siendo los mismos que muestran las cards del kiosco.
@@ -175,12 +174,16 @@
   }
   function esc(s) { const d = document.createElement('div'); d.textContent = s == null ? '' : s; return d.innerHTML; }
 
+  // Contadores = resumen del turno abierto de cada estación del filtro (sumados si son
+  // varias). Sin turno abierto no hay resumen: se muestra un guion.
+  const COUNTERS = { served: 'cServed', duplicados: 'cDup', no_autorizados: 'cNoAut', visitas: 'cVis' };
   function renderCounts() {
-    document.getElementById('cServed').textContent = counts.served;
-    document.getElementById('cDup').textContent = counts.duplicados;
-    document.getElementById('cSin').textContent = counts.sin_turno;
-    document.getElementById('cNoAut').textContent = counts.no_autorizados;
-    document.getElementById('cVis').textContent = counts.visitas;
+    const f = stationFilter.value;
+    const rows = lastShifts.filter(function (s) { return s.counts && (!f || String(s.station_id) === f); });
+    Object.keys(COUNTERS).forEach(function (k) {
+      const total = rows.reduce(function (n, s) { return n + (s.counts[k] || 0); }, 0);
+      document.getElementById(COUNTERS[k]).textContent = rows.length ? total : '–';
+    });
   }
 
   // Buscador: compara sin tildes ni mayúsculas contra nombre, empresa y nº de la tarjeta.
@@ -267,12 +270,18 @@
     updateEmpty();
   }
 
-  function bumpCount(status, isVisitor) {
-    if (status === 'Ok' && isVisitor) counts.visitas++;
-    if (status === 'Ok') counts.served++;
-    else if (status === 'Duplicado') counts.duplicados++;
-    else if (status === 'SinTurno') counts.sin_turno++;
-    else if (status === 'NoAutorizado') counts.no_autorizados++;
+  // Una marcación nueva suma al instante si es del turno en curso; si viene de un turno
+  // recién abierto, lo trae la consulta que se hace justo después (loadShiftsSoon).
+  function bumpCount(ev) {
+    const s = lastShifts.find(function (x) {
+      return x.counts && (x.shift_ids || []).indexOf(ev.shift_id) !== -1;
+    });
+    if (!s) return;
+    if (ev.status === 'Ok') {
+      s.counts.served++;
+      if (ev.is_visitor) s.counts.visitas++;
+    } else if (ev.status === 'Duplicado') s.counts.duplicados++;
+    else if (ev.status === 'NoAutorizado') s.counts.no_autorizados++;
     renderCounts();
   }
 
@@ -294,6 +303,7 @@
 
     anyActive = rows.some(function (s) { return s.active; });
     updateEmpty();
+    renderCounts();
 
     if (!rows.length) { shiftBar.innerHTML = '<span class="text-secondary small">Sin estaciones registradas.</span>'; return; }
     shiftBar.innerHTML = rows.map(function (s) {
@@ -320,6 +330,14 @@
   }
   loadShifts();
   setInterval(loadShifts, 15000);
+
+  // Tras una marcación se vuelve a consultar (turno recién abierto, resumen exacto). Las
+  // marcaciones llegan en lotes: una sola consulta por lote.
+  let shiftsTimer = null;
+  function loadShiftsSoon() {
+    clearTimeout(shiftsTimer);
+    shiftsTimer = setTimeout(loadShifts, 800);
+  }
 
   stationFilter.addEventListener('change', function () {
     refilter();
@@ -364,19 +382,11 @@
         if (m.shifts) { lastShifts = m.shifts; shiftKey = null; renderShifts(); }
         grid.innerHTML = '';
         (m.events || []).forEach(function (ev) { addCard(ev, true); });
-        if (m.counts) {
-          counts.served = m.counts.served || 0;
-          counts.duplicados = m.counts.duplicados || 0;
-          counts.sin_turno = m.counts.sin_turno || 0;
-          counts.no_autorizados = m.counts.no_autorizados || 0;
-          counts.visitas = m.counts.visitas || 0;
-          renderCounts();
-        }
         updateEmpty();
       } else if (m.type === 'event') {
         addCard(m.event, true);
-        bumpCount(m.event.status, m.event.is_visitor);
-        loadShifts();  // una marcación nueva puede venir con un turno recién abierto
+        bumpCount(m.event);
+        loadShiftsSoon();  // una marcación nueva puede venir con un turno recién abierto
       }
     };
 
