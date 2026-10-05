@@ -1,18 +1,22 @@
-from datetime import date, datetime, time, timedelta
+from datetime import datetime, timedelta
 
-from django.db.models import Count, Q
+from django.contrib import messages
+from django.core.paginator import Paginator
+from django.db.models import Count, Prefetch, Q
 from django.http import HttpResponse
-from django.shortcuts import get_object_or_404, render
+from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
+from django.utils.http import url_has_allowed_host_and_scheme
+from django.views.decorators.http import require_POST
 
 from backend.apps.core.models import AccessEvent, Person, Shift, Station
 from backend.apps.webapp.permissions import capability_required
 from backend.apps.reports.excel import build_excel, build_shift_excel
+from backend.apps.reports.forms import MailSettingsForm, ScheduledReportForm, TestMailForm
+from backend.apps.reports.mailing import MailError, retry_delivery, send_now, send_test_email
+from backend.apps.reports.models import MailSettings, ReportDelivery, ScheduledReport
 from backend.apps.reports.pdf import build_pdf
-from backend.apps.reports.service import build_report
-
-MESES = ['', 'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio',
-         'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre']
+from backend.apps.reports.service import build_report, local_range, report_title, shift_names
 
 
 def _month_range(today=None):
@@ -30,13 +34,6 @@ def _parse_date(value, fallback):
         return fallback
 
 
-def _aware(d, end=False):
-    """date -> datetime aware en la zona local (end=True usa fin del día)."""
-    t = time.max if end else time.min
-    naive = datetime.combine(d, t)
-    return timezone.make_aware(naive, timezone.get_current_timezone())
-
-
 def _resolve_params(request):
     default_from, default_to = _month_range()
     d_from = _parse_date(request.GET.get('from'), default_from)
@@ -52,34 +49,8 @@ def _resolve_params(request):
     shift_name = (request.GET.get('shift') or '').strip()
 
     # date_to exclusivo = día siguiente al último día incluido
-    dt_from = _aware(d_from)
-    dt_to = _aware(d_to + timedelta(days=1))
+    dt_from, dt_to = local_range(d_from, d_to)
     return d_from, d_to, dt_from, dt_to, station, shift_name
-
-
-def _last_day_of_month(d: date) -> date:
-    first_next = (d.replace(day=28) + timedelta(days=4)).replace(day=1)
-    return first_next - timedelta(days=1)
-
-
-def _titulo(d_from: date, d_to: date, shift_name: str = '') -> str:
-    if (d_from.day == 1 and d_from.month == d_to.month
-            and d_from.year == d_to.year and d_to == _last_day_of_month(d_from)):
-        base = f'Informe mensual — {MESES[d_from.month]} {d_from.year}'
-    elif d_from == d_to:
-        base = f'Informe diario — {d_from:%d-%m-%Y}'
-    else:
-        base = f'Informe {d_from:%d-%m-%Y} al {d_to:%d-%m-%Y}'
-    return f'{base} · turno {shift_name}' if shift_name else base
-
-
-def _shift_names(station=None):
-    """Nombres de turno distintos que existen en los datos (para el desplegable)."""
-    qs = Shift.objects.all()
-    if station is not None:
-        qs = qs.filter(station=station)
-    return sorted({(n or '').strip() for n in qs.values_list('name', flat=True) if (n or '').strip()},
-                  key=lambda s: s.upper())
 
 
 @capability_required('reports')
@@ -89,13 +60,13 @@ def report_view(request):
 
     context = {
         'data': data,
-        'titulo': _titulo(d_from, d_to, shift_name),
+        'titulo': report_title(d_from, d_to, shift_name),
         'd_from': d_from,
         'd_to': d_to,
         'station': station,
         'stations': Station.objects.all(),
         'shift_name': shift_name,
-        'shift_names': _shift_names(station),
+        'shift_names': shift_names(station),
     }
     return render(request, 'reports/report.html', context)
 
@@ -104,7 +75,7 @@ def report_view(request):
 def report_pdf(request):
     d_from, d_to, dt_from, dt_to, station, shift_name = _resolve_params(request)
     data = build_report(dt_from, dt_to, station=station, shift_name=shift_name)
-    pdf = build_pdf(data, _titulo(d_from, d_to, shift_name))
+    pdf = build_pdf(data, report_title(d_from, d_to, shift_name))
 
     resp = HttpResponse(pdf, content_type='application/pdf')
     fname = f'Informe_{d_from:%Y%m%d}_{d_to:%Y%m%d}.pdf'
@@ -116,7 +87,7 @@ def report_pdf(request):
 def report_excel(request):
     d_from, d_to, dt_from, dt_to, station, shift_name = _resolve_params(request)
     data = build_report(dt_from, dt_to, station=station, shift_name=shift_name)
-    xlsx = build_excel(data, _titulo(d_from, d_to, shift_name))
+    xlsx = build_excel(data, report_title(d_from, d_to, shift_name))
 
     resp = HttpResponse(
         xlsx,
@@ -147,8 +118,9 @@ def shift_list(request):
     if d_to < d_from:
         d_from, d_to = d_to, d_from
 
+    dt_from, dt_to = local_range(d_from, d_to)
     shifts = (Shift.objects
-              .filter(started_at__gte=_aware(d_from), started_at__lt=_aware(d_to + timedelta(days=1)))
+              .filter(started_at__gte=dt_from, started_at__lt=dt_to)
               .select_related('station')
               .annotate(n_ok=_event_count(AccessEvent.Status.OK),
                         n_dup=_event_count(AccessEvent.Status.DUPLICADO),
@@ -172,7 +144,7 @@ def shift_list(request):
         'station': station,
         'stations': Station.objects.all(),
         'shift_name': shift_name,
-        'shift_names': _shift_names(station),
+        'shift_names': shift_names(station),
     })
 
 
@@ -220,3 +192,157 @@ def shift_excel(request, pk):
     inicio = timezone.localtime(shift.started_at)
     resp['Content-Disposition'] = f'attachment; filename="Turno_{inicio:%Y%m%d_%H%M}.xlsx"'
     return resp
+
+
+# =====================================================================
+#  Envíos por correo: envíos programados, historial y servidor SMTP
+# =====================================================================
+def _mail_alerts(cfg, any_active):
+    """Avisos de lo que impediría que los envíos salgan."""
+    alerts = []
+    if not cfg.is_configured:
+        alerts.append('Falta configurar el servidor de correo: mientras tanto, los envíos fallan.')
+    elif cfg.password_unreadable:
+        alerts.append('La contraseña del servidor de correo ya no se puede leer: vuelve a '
+                      'ingresarla en Servidor de correo.')
+    if any_active and not cfg.scheduler_running:
+        alerts.append('El programador de envíos no está corriendo (servicio «scheduler» de '
+                      'docker-compose): los envíos programados no saldrán hasta que se inicie. '
+                      '«Enviar ahora» funciona igual.')
+    return alerts
+
+
+@capability_required('report_mail')
+def mail_schedule_list(request):
+    latest = ReportDelivery.objects.order_by('-scheduled_for', '-id')
+    reports = list(ScheduledReport.objects.select_related('station')
+                   .prefetch_related(Prefetch('deliveries', queryset=latest[:1], to_attr='latest')))
+    cfg = MailSettings.load()
+    return render(request, 'reports/mail/schedule_list.html', {
+        'reports': reports,
+        'recent': ReportDelivery.objects.select_related('requested_by')[:10],
+        'cfg': cfg,
+        'alerts': _mail_alerts(cfg, any(r.is_active for r in reports)),
+    })
+
+
+def _schedule_form(request, obj=None):
+    form = ScheduledReportForm(request.POST or None, instance=obj)
+    if request.method == 'POST' and form.is_valid():
+        report = form.save(commit=False)
+        if obj is None:
+            report.created_by = request.user
+        report.save()
+        if report.next_run_at:
+            when = timezone.localtime(report.next_run_at)
+            messages.success(request, f'Envío «{report.name}» guardado. Próximo envío: '
+                                      f'{when:%d-%m-%Y %H:%M} ({report.next_period_text}).')
+        else:
+            messages.success(request, f'Envío «{report.name}» guardado (en pausa).')
+        return redirect('reports:mail_schedule_list')
+    return render(request, 'reports/mail/schedule_form.html', {
+        'form': form, 'is_new': obj is None, 'obj': obj,
+    })
+
+
+@capability_required('report_mail')
+def mail_schedule_create(request):
+    return _schedule_form(request)
+
+
+@capability_required('report_mail')
+def mail_schedule_edit(request, pk):
+    return _schedule_form(request, get_object_or_404(ScheduledReport, pk=pk))
+
+
+@capability_required('report_mail')
+def mail_schedule_delete(request, pk):
+    report = get_object_or_404(ScheduledReport, pk=pk)
+    if request.method == 'POST':
+        report.delete()   # el historial de envíos se conserva
+        messages.success(request, f'Envío «{report.name}» eliminado.')
+        return redirect('reports:mail_schedule_list')
+    return render(request, 'webapp/confirm_delete.html', {
+        'obj': report, 'tipo': 'envío programado', 'volver': 'reports:mail_schedule_list'})
+
+
+@capability_required('report_mail')
+@require_POST
+def mail_schedule_send(request, pk):
+    """«Enviar ahora»: el período que cubriría un envío hecho hoy, sin esperar al programador."""
+    report = get_object_or_404(ScheduledReport, pk=pk)
+    delivery = send_now(report, user=request.user)
+    if delivery.status == ReportDelivery.Status.SENT:
+        messages.success(request, f'Informe {delivery.period_text} enviado a '
+                                  f'{len(delivery.recipient_list)} destinatario(s).')
+    else:
+        messages.error(request, f'No se pudo enviar «{report.name}»: {delivery.error}')
+    return redirect('reports:mail_schedule_list')
+
+
+@capability_required('report_mail')
+def mail_delivery_list(request):
+    deliveries = ReportDelivery.objects.select_related('requested_by')
+    report = None
+    if request.GET.get('envio', '').isdigit():
+        report = ScheduledReport.objects.filter(pk=request.GET['envio']).first()
+        if report is not None:
+            deliveries = deliveries.filter(report=report)
+    status = request.GET.get('estado', '')
+    if status in ReportDelivery.Status.values:
+        deliveries = deliveries.filter(status=status)
+    page = Paginator(deliveries, 50).get_page(request.GET.get('page'))
+    return render(request, 'reports/mail/delivery_list.html', {
+        'page': page, 'report': report, 'status': status,
+        'reports': ScheduledReport.objects.all(), 'statuses': ReportDelivery.Status.choices,
+    })
+
+
+@capability_required('report_mail')
+@require_POST
+def mail_delivery_retry(request, pk):
+    # solo los fallidos: los que siguen en cola los reintenta el programador
+    delivery = get_object_or_404(ReportDelivery, pk=pk, status=ReportDelivery.Status.FAILED)
+    if retry_delivery(delivery):
+        messages.success(request, f'«{delivery.report_name}» ({delivery.period_text}) reenviado.')
+    else:
+        messages.error(request, f'No se pudo enviar «{delivery.report_name}»: {delivery.error}')
+    back = request.POST.get('next', '')
+    if not url_has_allowed_host_and_scheme(back, allowed_hosts={request.get_host()}):
+        back = 'reports:mail_delivery_list'
+    return redirect(back)
+
+
+@capability_required('mail_server')
+def mail_settings(request):
+    cfg = MailSettings.load()
+    form = MailSettingsForm(request.POST or None, instance=cfg)
+    if request.method == 'POST' and form.is_valid():
+        obj = form.save(commit=False)
+        obj.updated_by = request.user
+        obj.save()
+        messages.success(request, 'Servidor de correo guardado. Envía un correo de prueba para '
+                                  'confirmar que funciona.')
+        return redirect('reports:mail_settings')
+    return render(request, 'reports/mail/settings.html', {
+        'form': form, 'cfg': cfg,
+        'test_form': TestMailForm(initial={'to': request.user.email}),
+    })
+
+
+@capability_required('mail_server')
+@require_POST
+def mail_settings_test(request):
+    form = TestMailForm(request.POST)
+    if not form.is_valid():
+        messages.error(request, 'Indica una dirección de correo válida para la prueba.')
+        return redirect('reports:mail_settings')
+    to = form.cleaned_data['to']
+    try:
+        send_test_email(MailSettings.load(), to)
+    except MailError as exc:
+        messages.error(request, f'No se pudo enviar el correo de prueba: {exc}')
+    else:
+        messages.success(request, f'Correo de prueba enviado a {to}. Revisa la bandeja de '
+                                  'entrada (y la carpeta de spam).')
+    return redirect('reports:mail_settings')

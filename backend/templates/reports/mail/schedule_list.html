@@ -1,0 +1,108 @@
+{% extends 'base.html' %}
+{% block title %}Envíos por correo · Informes{% endblock %}
+{% block nav_reports %}active{% endblock %}
+
+{% block content %}
+{% with tab='mail' %}{% include 'reports/_tabs.html' %}{% endwith %}
+
+{% for a in alerts %}
+<div class="alert alert-warning py-2"><i class="bi bi-exclamation-triangle"></i> {{ a }}
+  {% if not cfg.is_configured and user.caps.mail_server and forloop.first %}<a href="{% url 'reports:mail_settings' %}" class="alert-link">Configurar ahora</a>{% endif %}
+</div>
+{% endfor %}
+
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+  <p class="ds-caption text-muted mb-0">
+    El informe de colaciones en PDF se envía solo, cada cierto tiempo, a los correos que indiques.
+    Cada envío elige qué período cubre: por ejemplo, la semana anterior todos los lunes, o del 24
+    al 23 el día 24 de cada mes.
+  </p>
+  <div class="d-flex gap-2">
+    <a href="{% url 'reports:mail_delivery_list' %}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-clock-history"></i> Historial</a>
+    <a href="{% url 'reports:mail_schedule_create' %}" class="btn btn-primary btn-sm"><i class="bi bi-plus-lg"></i> Nuevo envío</a>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-4">
+  <div class="table-responsive">
+    <table class="table table-hover mb-0 align-middle">
+      <thead><tr>
+        <th>Envío</th><th>Cuándo</th><th>Período del informe</th><th>Destinatarios</th>
+        <th>Próximo envío</th><th>Último envío</th><th class="text-end">Acciones</th>
+      </tr></thead>
+      <tbody>
+        {% for r in reports %}
+        <tr class="{% if not r.is_active %}text-muted{% endif %}">
+          <td>
+            <span class="fw-semibold">{{ r.name }}</span>
+            {% if not r.is_active %}<span class="badge bg-secondary">en pausa</span>{% endif %}
+            <div class="ds-caption text-muted">{{ r.filters_text }}{% if r.attach_excel %} · PDF + Excel{% endif %}</div>
+          </td>
+          <td>{{ r.schedule_text }}</td>
+          <td>{{ r.period_label }}</td>
+          <td>
+            {% with to=r.recipient_list %}
+            <span title="{{ to|join:', ' }}">{{ to.0 }}{% if to|length > 1 %} <span class="badge bg-light text-dark">+{{ to|length|add:"-1" }}</span>{% endif %}</span>
+            {% endwith %}
+          </td>
+          <td>
+            {% if r.next_run_at %}
+              {{ r.next_run_at|date:"D d-m-Y H:i" }}
+              <div class="ds-caption text-muted">cubrirá {{ r.next_period_text }}</div>
+            {% else %}<span class="text-muted">—</span>{% endif %}
+          </td>
+          <td>
+            {% with d=r.latest.0 %}
+            {% if d %}
+              {% include 'reports/mail/_status.html' %}
+              <div class="ds-caption text-muted">{{ d.scheduled_for|date:"d-m-Y H:i" }}</div>
+            {% else %}<span class="text-muted">Nunca</span>{% endif %}
+            {% endwith %}
+          </td>
+          <td class="text-end text-nowrap">
+            <form method="post" action="{% url 'reports:mail_schedule_send' r.pk %}" class="d-inline"
+                  data-confirm="¿Enviar ahora el informe {{ r.period_preview }} a {{ r.recipient_list|length }} destinatario(s)?"
+                  onsubmit="return confirm(this.dataset.confirm)">
+              {% csrf_token %}
+              <button type="submit" class="btn btn-sm btn-outline-primary" title="Enviar ahora"><i class="bi bi-send"></i></button>
+            </form>
+            <a href="{% url 'reports:mail_schedule_edit' r.pk %}" class="btn btn-sm btn-outline-secondary" title="Editar"><i class="bi bi-pencil"></i></a>
+            <a href="{% url 'reports:mail_delivery_list' %}?envio={{ r.pk }}" class="btn btn-sm btn-outline-secondary" title="Historial de este envío"><i class="bi bi-clock-history"></i></a>
+            <a href="{% url 'reports:mail_schedule_delete' r.pk %}" class="btn btn-sm btn-outline-danger" title="Eliminar"><i class="bi bi-trash"></i></a>
+          </td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="7" class="text-muted text-center py-4">
+          Aún no hay envíos programados. <a href="{% url 'reports:mail_schedule_create' %}">Crea el primero</a>.
+        </td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% if recent %}
+<div class="card shadow-sm">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span>Últimos envíos</span>
+    <a href="{% url 'reports:mail_delivery_list' %}" class="ds-caption">Ver todo el historial</a>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-sm mb-0 align-middle">
+      <thead><tr><th>Fecha</th><th>Envío</th><th>Período</th><th>Estado</th><th>Detalle</th></tr></thead>
+      <tbody>
+        {% for d in recent %}
+        <tr>
+          <td class="text-nowrap">{{ d.scheduled_for|date:"d-m-Y H:i" }}</td>
+          <td>{{ d.report_name }}{% if d.trigger == 'manual' %} <span class="badge bg-light text-dark" title="Pedido por {{ d.requested_by.full_name|default:'—' }}">manual</span>{% endif %}</td>
+          <td class="text-nowrap">{{ d.period_text }}</td>
+          <td>{% include 'reports/mail/_status.html' %}</td>
+          <td class="ds-caption">{% if d.error %}<span class="text-danger">{{ d.error }}</span>{% else %}{{ d.recipient_list|join:", " }}{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

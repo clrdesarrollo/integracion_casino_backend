@@ -31,6 +31,7 @@ variables.env.local
 *.pdf
 *.xlsx
 
-# Salidas del pipeline de Jenkins
-reports/
-version
+# Salidas del pipeline de Jenkins (solo en la raíz: sin la barra inicial también
+# ignoraría backend/apps/reports/ y backend/templates/reports/)
+/reports/
+/version

@@ -1,0 +1,4 @@
+{# Estado de un envío (`d` = ReportDelivery) #}
+{% if d.status == 'sent' %}<span class="badge bg-success"><i class="bi bi-check2"></i> Enviado</span>
+{% elif d.status == 'pending' %}<span class="badge bg-warning text-dark" {% if d.error %}title="{{ d.error }}"{% endif %}><i class="bi bi-hourglass-split"></i> {% if d.attempts %}Reintento {{ d.next_attempt_at|date:"H:i" }}{% else %}En cola{% endif %}</span>
+{% else %}<span class="badge bg-danger" title="{{ d.error }}"><i class="bi bi-x-circle"></i> Falló</span>{% endif %}

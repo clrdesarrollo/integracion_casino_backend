@@ -24,7 +24,10 @@ PANEL = ['/']
 TICKETS = ['/monitor/', '/monitor/turnos/', '/visitas/', '/visitas/colaciones/',
            '/visitas/funcionarios/', '/reportes/', '/reportes/pdf/', '/reportes/excel/',
            '/reportes/turnos/']
-CONFIG = ['/turnos/', '/estaciones/', '/usuarios/', '/visitas/tarjetas/']
+CONFIG = ['/turnos/', '/estaciones/', '/usuarios/', '/visitas/tarjetas/',
+          # envíos del informe por correo y servidor SMTP: de partida, solo el administrador
+          '/reportes/envios/', '/reportes/envios/nuevo/', '/reportes/envios/historial/',
+          '/reportes/correo/']
 
 
 def crear_usuario(email, role):

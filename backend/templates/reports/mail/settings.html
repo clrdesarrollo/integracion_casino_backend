@@ -1,0 +1,100 @@
+{% extends 'base.html' %}
+{% block title %}Servidor de correo · Informes{% endblock %}
+{% block nav_reports %}active{% endblock %}
+
+{% block content %}
+{% with tab='smtp' %}{% include 'reports/_tabs.html' %}{% endwith %}
+
+{% if cfg.password_unreadable %}
+<div class="alert alert-warning py-2"><i class="bi bi-exclamation-triangle"></i>
+  La contraseña guardada ya no se puede leer (cambió la clave secreta del servidor): vuelve a ingresarla.
+</div>
+{% endif %}
+
+<div class="row g-3">
+  <div class="col-xl-7">
+    <div class="card shadow-sm">
+      <div class="card-header">Servidor SMTP</div>
+      <div class="card-body">
+        <p class="ds-caption text-muted">
+          Cuenta de correo con la que el sistema envía los informes programados. Para Microsoft 365
+          suele ser <code>smtp.office365.com</code>, puerto 587 con STARTTLS; para Gmail,
+          <code>smtp.gmail.com</code>, puerto 587 con STARTTLS y una contraseña de aplicación.
+        </p>
+        <form method="post">
+          {% csrf_token %}
+          {% if form.non_field_errors %}<div class="alert alert-danger">{{ form.non_field_errors }}</div>{% endif %}
+          <div class="row g-3">
+            <div class="col-md-8">
+              <label class="form-label" for="{{ form.host.id_for_label }}">Servidor</label>{{ form.host }}
+              {% for e in form.host.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+            </div>
+            <div class="col-md-4">
+              <label class="form-label" for="{{ form.port.id_for_label }}">Puerto</label>{{ form.port }}
+              {% for e in form.port.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+            </div>
+            <div class="col-12">
+              <label class="form-label" for="{{ form.security.id_for_label }}">Cifrado</label>{{ form.security }}
+            </div>
+            <div class="col-md-6">
+              <label class="form-label" for="{{ form.username.id_for_label }}">Usuario</label>{{ form.username }}
+              <div class="form-text">{{ form.username.help_text }}</div>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label" for="{{ form.password.id_for_label }}">Contraseña</label>{{ form.password }}
+              <div class="form-text">{% if cfg.has_password %}Hay una contraseña guardada. {% endif %}{{ form.password.help_text }}</div>
+              {% for e in form.password.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+            </div>
+            <div class="col-md-6">
+              <label class="form-label" for="{{ form.from_email.id_for_label }}">Correo del remitente</label>{{ form.from_email }}
+              <div class="form-text">{{ form.from_email.help_text }}</div>
+              {% for e in form.from_email.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+            </div>
+            <div class="col-md-6">
+              <label class="form-label" for="{{ form.from_name.id_for_label }}">Nombre del remitente</label>{{ form.from_name }}
+            </div>
+          </div>
+          <div class="mt-3">
+            <button type="submit" class="btn btn-primary"><i class="bi bi-save"></i> Guardar</button>
+          </div>
+        </form>
+        {% if cfg.updated_by %}<div class="ds-caption text-muted mt-3">Última modificación: {{ cfg.updated_at|date:"d-m-Y H:i" }} por {{ cfg.updated_by.full_name }}</div>{% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-xl-5">
+    <div class="card shadow-sm mb-3">
+      <div class="card-header">Probar el envío</div>
+      <div class="card-body">
+        {% if cfg.is_configured %}
+        <form method="post" action="{% url 'reports:mail_settings_test' %}">
+          {% csrf_token %}
+          <label class="form-label" for="{{ test_form.to.id_for_label }}">{{ test_form.to.label }}</label>
+          <div class="input-group">
+            {{ test_form.to }}
+            <button type="submit" class="btn btn-outline-primary"><i class="bi bi-send"></i> Enviar prueba</button>
+          </div>
+          <div class="form-text">Usa la configuración guardada: guarda los cambios antes de probar.</div>
+        </form>
+        {% else %}
+        <p class="text-muted mb-0">Guarda el servidor y el correo del remitente para poder enviar una prueba.</p>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="card shadow-sm">
+      <div class="card-header">Programador de envíos</div>
+      <div class="card-body">
+        {% if cfg.scheduler_running %}
+        <p class="mb-0"><i class="bi bi-check-circle-fill text-success"></i> Funcionando · última revisión {{ cfg.scheduler_seen_at|date:"d-m-Y H:i:s" }}.</p>
+        {% else %}
+        <p class="mb-1"><i class="bi bi-exclamation-triangle-fill text-warning"></i> No está corriendo{% if cfg.scheduler_seen_at %} (última señal {{ cfg.scheduler_seen_at|date:"d-m-Y H:i" }}){% endif %}.</p>
+        <p class="ds-caption text-muted mb-0">Es el servicio <code>scheduler</code> de docker-compose: revisa cada 30 segundos qué
+          envíos toca hacer. Sin él, los envíos programados no salen (el botón «Enviar ahora» sí funciona).</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

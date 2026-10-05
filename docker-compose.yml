@@ -56,6 +56,22 @@ services:
       retries: 10
       start_period: 30s
 
+  scheduler:
+    # Envío programado de informes por correo (ver docker-compose.prod.yml)
+    container_name: "casino_scheduler"
+    build:
+      dockerfile: ./docker/web/Dockerfile
+      context: .
+    command: ["python", "manage.py", "send_scheduled_reports", "--loop"]
+    volumes:
+      - .:/app
+    env_file:
+      - variables.env
+    depends_on:
+      web:
+        condition: service_healthy
+    restart: always
+
 volumes:
   static_volume:
   media_volume:

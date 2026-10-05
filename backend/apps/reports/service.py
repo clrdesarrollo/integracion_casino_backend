@@ -9,7 +9,7 @@ Las marcaciones "SinTurno" no suman: el kiosco las rechaza y no se sirve colaci�
 """
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, time, timedelta
 
 from django.utils import timezone
 
@@ -18,6 +18,45 @@ from backend.apps.core.models import AccessEvent, Shift, Station, Visit, Visitor
 
 #: Empresa con la que figuran en el informe las colaciones de ingreso manual (sin persona).
 MANUAL_COMPANY = '(ingreso manual)'
+
+MESES = ['', 'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio',
+         'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre']
+
+
+def local_datetime(d: date, end=False) -> datetime:
+    """date -> datetime aware en la zona local (end=True usa fin del día)."""
+    naive = datetime.combine(d, time.max if end else time.min)
+    return timezone.make_aware(naive, timezone.get_current_timezone())
+
+
+def local_range(d_from: date, d_to: date):
+    """Días incluidos [d_from, d_to] -> (inicio, fin exclusivo) como datetimes aware."""
+    return local_datetime(d_from), local_datetime(d_to + timedelta(days=1))
+
+
+def last_day_of_month(d: date) -> date:
+    first_next = (d.replace(day=28) + timedelta(days=4)).replace(day=1)
+    return first_next - timedelta(days=1)
+
+
+def shift_names(station=None):
+    """Nombres de turno distintos que existen en los datos (para el desplegable)."""
+    qs = Shift.objects.all()
+    if station is not None:
+        qs = qs.filter(station=station)
+    return sorted({(n or '').strip() for n in qs.values_list('name', flat=True) if (n or '').strip()},
+                  key=lambda s: s.upper())
+
+
+def report_title(d_from: date, d_to: date, shift_name: str = '') -> str:
+    if (d_from.day == 1 and d_from.month == d_to.month
+            and d_from.year == d_to.year and d_to == last_day_of_month(d_from)):
+        base = f'Informe mensual — {MESES[d_from.month]} {d_from.year}'
+    elif d_from == d_to:
+        base = f'Informe diario — {d_from:%d-%m-%Y}'
+    else:
+        base = f'Informe {d_from:%d-%m-%Y} al {d_to:%d-%m-%Y}'
+    return f'{base} · turno {shift_name}' if shift_name else base
 
 
 @dataclass

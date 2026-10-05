@@ -1,0 +1,121 @@
+{% extends 'base.html' %}
+{% block title %}{% if is_new %}Nuevo envío{% else %}Editar envío{% endif %} · Informes{% endblock %}
+{% block nav_reports %}active{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h1 class="page-title"><i class="bi bi-envelope-paper"></i> {% if is_new %}Nuevo envío programado{% else %}Editar «{{ obj.name }}»{% endif %}</h1>
+  <a href="{% url 'reports:mail_schedule_list' %}" class="btn btn-outline-secondary btn-sm">← Volver</a>
+</div>
+
+<div class="card shadow-sm" style="max-width: 860px;">
+  <div class="card-body">
+    <form method="post">
+      {% csrf_token %}
+      {% if form.non_field_errors %}<div class="alert alert-danger">{{ form.non_field_errors }}</div>{% endif %}
+
+      <div class="row g-3">
+        <div class="col-md-8">
+          <label class="form-label" for="{{ form.name.id_for_label }}">Nombre</label>{{ form.name }}
+          {% for e in form.name.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+        </div>
+        <div class="col-md-4 d-flex align-items-end">
+          <div class="form-check form-switch mb-2">{{ form.is_active }}<label class="form-check-label" for="{{ form.is_active.id_for_label }}">Activo</label></div>
+        </div>
+      </div>
+
+      <hr>
+      <h6 class="fw-semibold">Cuándo se envía</h6>
+      <div class="row g-3">
+        <div class="col-md-5">
+          <label class="form-label" for="{{ form.frequency.id_for_label }}">Frecuencia</label>{{ form.frequency }}
+        </div>
+        <div class="col-md-3" id="boxMonthDay">
+          <label class="form-label" for="{{ form.month_day.id_for_label }}">Día del mes</label>{{ form.month_day }}
+          {% for e in form.month_day.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+        </div>
+        <div class="col-md-3">
+          <label class="form-label" for="{{ form.send_time.id_for_label }}">Hora</label>{{ form.send_time }}
+          {% for e in form.send_time.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+        </div>
+      </div>
+      <div class="form-text" id="helpMonthDay">{{ form.month_day.help_text }}</div>
+      <div class="mt-2" id="boxWeekdays">
+        <label class="form-label">Días de envío</label>
+        <div class="d-flex flex-wrap gap-3">
+          {% for cb in form.weekdays %}
+            <div class="form-check">{{ cb.tag }}<label class="form-check-label" for="{{ cb.id_for_label }}">{{ cb.choice_label }}</label></div>
+          {% endfor %}
+        </div>
+        {% for e in form.weekdays.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+      </div>
+
+      <hr>
+      <h6 class="fw-semibold">Qué se envía</h6>
+      <div class="row g-3">
+        <div class="col-md-8">
+          <label class="form-label" for="{{ form.period.id_for_label }}">Período que cubre el informe</label>{{ form.period }}
+          <div class="form-text" id="helpPeriod"></div>
+        </div>
+        <div class="col-md-4" id="boxPeriodDays">
+          <label class="form-label" for="{{ form.period_days.id_for_label }}">Cantidad de días</label>{{ form.period_days }}
+          {% for e in form.period_days.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+        </div>
+        <div class="col-md-6">
+          <label class="form-label" for="{{ form.station.id_for_label }}">Estación</label>{{ form.station }}
+        </div>
+        <div class="col-md-6">
+          <label class="form-label" for="{{ form.shift_name.id_for_label }}">Turno</label>{{ form.shift_name }}
+        </div>
+      </div>
+      <div class="form-check form-switch mt-3">{{ form.attach_excel }}<label class="form-check-label" for="{{ form.attach_excel.id_for_label }}">Adjuntar también en Excel (además del PDF)</label></div>
+
+      <hr>
+      <h6 class="fw-semibold">A quién</h6>
+      <div class="mb-3">
+        <label class="form-label" for="{{ form.recipients.id_for_label }}">Destinatarios</label>{{ form.recipients }}
+        <div class="form-text">{{ form.recipients.help_text }}</div>
+        {% for e in form.recipients.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+      </div>
+      <div class="mb-3">
+        <label class="form-label" for="{{ form.subject.id_for_label }}">Asunto</label>{{ form.subject }}
+        <div class="form-text">{{ form.subject.help_text }}</div>
+      </div>
+      <div class="mb-3">
+        <label class="form-label" for="{{ form.message.id_for_label }}">Mensaje</label>{{ form.message }}
+        <div class="form-text">{{ form.message.help_text }} El correo incluye siempre un resumen con las cifras principales.</div>
+      </div>
+
+      <button type="submit" class="btn btn-primary"><i class="bi bi-save"></i> Guardar</button>
+      <a href="{% url 'reports:mail_schedule_list' %}" class="btn btn-outline-secondary">Cancelar</a>
+    </form>
+  </div>
+</div>
+
+<script>
+(function () {
+  var freq = document.getElementById('{{ form.frequency.id_for_label }}');
+  var period = document.getElementById('{{ form.period.id_for_label }}');
+  var show = function (id, on) { document.getElementById(id).style.display = on ? '' : 'none'; };
+  // Ejemplo de lo que cubre cada período, para no tener que adivinar
+  var help = {
+    previous_day: 'Ej.: el envío del martes trae las colaciones del lunes.',
+    same_day: 'Lo registrado ese mismo día hasta la hora del envío (útil para un envío al cierre del día).',
+    previous_week: 'De lunes a domingo de la semana anterior al envío.',
+    previous_month: 'Del 1 al último día del mes anterior al envío.',
+    since_last: 'Desde la fecha del envío anterior hasta el día antes de este. Ej.: mensual el día 24 → del 24 del mes anterior al 23; los lunes y jueves → de lunes a miércoles y de jueves a domingo.',
+    last_days: 'Los N días que terminan el día anterior al envío.'
+  };
+  function refresh() {
+    show('boxWeekdays', freq.value === 'weekly');
+    show('boxMonthDay', freq.value === 'monthly');
+    show('helpMonthDay', freq.value === 'monthly');
+    show('boxPeriodDays', period.value === 'last_days');
+    document.getElementById('helpPeriod').textContent = help[period.value] || '';
+  }
+  freq.addEventListener('change', refresh);
+  period.addEventListener('change', refresh);
+  refresh();
+})();
+</script>
+{% endblock %}

@@ -18,6 +18,10 @@ daphne==4.1.2
 reportlab==4.2.5
 xlsxwriter==3.2.0
 
+# Cifrado de la contraseña SMTP guardada en la base. Ya llega como dependencia de daphne
+# (autobahn); se declara porque el código la usa directamente.
+cryptography>=42
+
 # Pruebas (van en la imagen para que Jenkins pruebe exactamente lo que se publica)
 pytest==9.0.2
 pytest-django==4.11.1

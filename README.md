@@ -253,6 +253,45 @@ Botones **PDF** y **Excel** para descargar.
 Para el cierre de mes: entra con el rango del primer al último día del mes; el título
 del informe se rotula automáticamente como "Informe mensual — <mes> <año>".
 
+### Envíos por correo
+
+En **Informes → Envíos por correo** se programa el envío automático del informe en **PDF**
+(y opcionalmente también en Excel) a una lista de correos. Cada envío define:
+
+- **Cuándo**: todos los días, ciertos días de la semana o un día del mes (si el mes es más
+  corto, sale el último día), a una hora.
+- **Qué período cubre**: día anterior, mismo día, semana anterior (lunes a domingo), mes
+  anterior, últimos N días, o **desde el envío anterior** (p. ej. mensual el día 24 → del 24
+  del mes anterior al 23).
+- Estación y turno (o todos), destinatarios, asunto y un mensaje opcional. El correo trae un
+  resumen con las cifras principales.
+
+«Enviar ahora» manda en el momento el período que cubriría un envío hecho hoy. El
+**historial** guarda cada envío (período, destinatarios, estado, error); se conserva aunque se
+elimine el envío programado.
+
+En **Informes → Servidor de correo** se configura la cuenta SMTP (servidor, puerto,
+STARTTLS / SSL / sin cifrado, usuario, remitente) y se envía un correo de prueba. La
+contraseña se guarda **cifrada** con una clave derivada de `DJANGO_SECRET_KEY`: si esa clave
+cambia, hay que volver a ingresarla (la pantalla lo avisa).
+
+Permisos: **Envíos por correo** (`report_mail`) y **Servidor de correo** (`mail_server`). De
+partida solo los tiene el administrador; se asignan a otros roles en **Roles**. Quien puede
+programar envíos puede mandar el informe a cualquier dirección.
+
+**El programador** es el servicio `scheduler` de docker-compose (misma imagen que `web`):
+
+```bash
+python manage.py send_scheduled_reports --loop   # servicio: revisa cada 30 s
+python manage.py send_scheduled_reports          # un solo ciclo (cron, pruebas)
+```
+
+Cuando a un envío le llega la hora se encola con su período y se manda. Si el servidor de
+correo falla, se reintenta a los 10 y a los 30 minutos; tras el tercer intento queda
+«Falló» y se puede reintentar a mano desde el historial. Si el programador estuvo detenido y
+pasaron varias fechas, solo se manda la más reciente. Las horas son las de `TIME_ZONE`.
+Si el servicio no está corriendo, Envíos por correo y Servidor de correo lo advierten.
+
 ---
 
 ## Desarrollo local sin Docker
@@ -281,7 +320,7 @@ backend/
     authentication/  Login por email
     api/             Ingesta con API key (/api/sync/, /api/healthcheck/)
     webapp/          Dashboard, usuarios, estaciones y API keys
-    reports/         Servicio de informe + generadores PDF/Excel
+    reports/         Servicio de informe + generadores PDF/Excel + envíos por correo
   templates/         Plantillas (Bootstrap 5)
 docker/              Dockerfiles de web y postgresql
 requirements/        Dependencias

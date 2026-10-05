@@ -19,6 +19,10 @@ CAPABILITIES = (
     Capability('shifts', 'Detalle de colaciones',
                'Dentro de Informes: cada turno realizado, cómo se abrió y cerró, y quién marcó y a qué hora.',
                'Operación', 'reports:shift_list'),
+    Capability('report_mail', 'Envíos por correo',
+               'Dentro de Informes: programar el envío periódico del informe en PDF por correo '
+               '(a cualquier destinatario) y ver el historial de envíos.',
+               'Operación', 'reports:mail_schedule_list'),
     Capability('visits', 'Registro de visitas',
                'Entregar y recibir tarjetas de visita (trámite de mesón).',
                'Visitas', 'webapp:visit_list'),
@@ -34,6 +38,9 @@ CAPABILITIES = (
     Capability('users', 'Usuarios y roles',
                'Crear usuarios y definir qué puede hacer cada rol.',
                'Configuración', 'webapp:user_list'),
+    Capability('mail_server', 'Servidor de correo',
+               'Configuración SMTP con la que el sistema envía los correos.',
+               'Configuración', 'reports:mail_settings'),
 )
 
 CAPABILITY_CODES = tuple(c.code for c in CAPABILITIES)

@@ -72,5 +72,25 @@ services:
       start_period: 30s
     logging: *logging
 
+  scheduler:
+    # Envío programado de informes por correo: misma imagen que `web`; cada 30 s revisa qué
+    # envíos toca hacer y los despacha. Sin este servicio los envíos programados no salen.
+    image: registry.clrobotics.cl/casino-backend:${TAG:-latest}
+    container_name: "casino_scheduler"
+    command: ["python", "manage.py", "send_scheduled_reports", "--loop"]
+    env_file:
+      - variables.env
+    environment:
+      HOST_DB: pgdb
+      PORT_DB: "5432"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+    depends_on:
+      # `web` aplica las migraciones al arrancar: el programador parte después
+      web:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *logging
+
 volumes:
   pgdata:
