@@ -228,7 +228,9 @@ def register_manual_event(shift, person, clock, reason, user, *, override=False,
         raise ManualEntryError('Indica el motivo (al menos 10 caracteres): es lo que quedará en el '
                                'informe y en la bitácora.')
     with transaction.atomic():
-        shift = Shift.objects.select_for_update().select_related('station').get(pk=shift.pk)
+        # of=('self',): se bloquea solo la fila del turno, no la de la estación
+        shift = (Shift.objects.select_for_update(of=('self',))
+                 .select_related('station').get(pk=shift.pk))
         why_not = shift_block_reason(shift)
         if why_not:
             raise ManualEntryError(why_not)
@@ -289,7 +291,10 @@ def annul_manual_event(event, reason, user, request=None):
     if len(reason) < 5:
         raise ManualEntryError('Indica el motivo de la anulación.')
     with transaction.atomic():
-        event = AccessEvent.objects.select_for_update().select_related('station', 'shift').get(pk=event.pk)
+        # of=('self',): se bloquea solo la marcación. El turno es una relación opcional
+        # (LEFT JOIN) y PostgreSQL no admite FOR UPDATE sobre el lado nulo de un outer join.
+        event = (AccessEvent.objects.select_for_update(of=('self',))
+                 .select_related('station', 'shift').get(pk=event.pk))
         if not event.is_manual:
             raise ManualEntryError('Solo se pueden anular las colaciones ingresadas a mano; las '
                                    'marcaciones del terminal no se tocan.')
