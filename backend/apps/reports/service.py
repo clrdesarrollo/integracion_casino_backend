@@ -64,6 +64,7 @@ class ShiftRow:
     shift: Shift
     en_turno: int = 0
     manuales: int = 0            # registro de ingreso manual (sin marcaciones)
+    backoffice: int = 0          # de las «en turno», ingresadas a mano desde el backoffice
 
     @property
     def total(self):
@@ -134,6 +135,11 @@ class ReportData:
     visitas: int = 0             # colaciones servidas a visitas (tarjeta RFID)
     visitas_sin_registro: int = 0  # de esas, con tarjeta entregada sin registro de visita
     manuales: int = 0            # colaciones de ingreso manual (incluidas en `servidas`)
+    # Colaciones ingresadas a mano desde el backoffice porque el kiosco no pudo marcarlas
+    # (incluidas en `servidas`, y en por_persona / por_empresa como cualquier otra), con su
+    # detalle: quién las registró y por qué. Las anuladas no están (no cuentan).
+    backoffice: int = 0
+    backoffice_detalle: list = field(default_factory=list)   # [AccessEvent]
 
     # Nombres de turno (desayuno, almuerzo, …) presentes en las colaciones servidas,
     # ordenados por hora del día. Son las columnas de la composición de `por_empresa`
@@ -210,6 +216,8 @@ def build_report(date_from: datetime, date_to: datetime,
     # turno iniciado descarta la marcación). Las históricas siguen sin sumar a nada.
     data.visitas = sum(1 for e in served if e.is_visitor)
     data.personas_unicas = len({e.employee_no for e in served})
+    data.backoffice_detalle = sorted((e for e in served if e.is_manual), key=lambda e: e.event_time)
+    data.backoffice = len(data.backoffice_detalle)
 
     # ---- Visitas: a quién se le había entregado la tarjeta en cada colación ----
     visitor_ok = [e for e in served if e.is_visitor]
@@ -293,9 +301,12 @@ def build_report(date_from: datetime, date_to: datetime,
 
     # ---- Por turno ----
     en_turno_por_shift = defaultdict(int)
+    backoffice_por_shift = defaultdict(int)
     for e in ok_events:
         if e.shift_id is not None:
             en_turno_por_shift[e.shift_id] += 1
+            if e.is_manual:
+                backoffice_por_shift[e.shift_id] += 1
 
     rows = []
     for s in sorted(shifts + manual_shifts, key=lambda x: x.started_at):
@@ -303,6 +314,7 @@ def build_report(date_from: datetime, date_to: datetime,
             shift=s,
             en_turno=en_turno_por_shift.get(s.id, 0),
             manuales=s.manual_count or 0,
+            backoffice=backoffice_por_shift.get(s.id, 0),
         ))
     data.por_turno = rows
 

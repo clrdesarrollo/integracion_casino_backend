@@ -5,6 +5,7 @@ from django.shortcuts import redirect, render
 from django.utils.http import url_has_allowed_host_and_scheme
 
 from backend.apps.authentication.forms import LoginForm
+from backend.apps.core import audit
 
 
 def _post_login_redirect(request, user):
@@ -41,13 +42,22 @@ def login_view(request):
         )
         if user is not None:
             login(request, user)
+            audit.log('sesion.inicio', f'{user.full_name} inició sesión ({user.role.name}).',
+                      request=request, user=user)
             return _post_login_redirect(request, user)
+        # solo el correo intentado: la contraseña jamás se anota
+        audit.log('sesion.fallida',
+                  f'Intento de inicio de sesión fallido para {form.cleaned_data["email"]}.',
+                  request=request, level=audit.WARNING,
+                  data={'correo': form.cleaned_data['email']})
         messages.error(request, 'Credenciales inválidas o usuario inactivo.')
 
     return render(request, 'authentication/login.html', {'form': form})
 
 
 def logout_view(request):
+    if request.user.is_authenticated:
+        audit.log('sesion.cierre', f'{request.user.full_name} cerró sesión.', request=request)
     logout(request)
     messages.info(request, 'Sesión cerrada.')
     return redirect('login')

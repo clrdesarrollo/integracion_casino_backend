@@ -1,18 +1,24 @@
+import json
 from datetime import datetime, timedelta
 
 from django.contrib import messages
 from django.core.paginator import Paginator
 from django.db.models import Count, Prefetch, Q
-from django.http import HttpResponse
+from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils import timezone
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_POST
 
+from backend.apps.core import audit
 from backend.apps.core.models import AccessEvent, Person, Shift, Station
 from backend.apps.webapp.permissions import capability_required
+from backend.apps.reports import manual
 from backend.apps.reports.excel import build_excel, build_shift_excel
-from backend.apps.reports.forms import MailSettingsForm, ScheduledReportForm, TestMailForm
+from backend.apps.reports.forms import (
+    AnnulEventForm, MailSettingsForm, ManualEventForm, ScheduledReportForm, TestMailForm,
+)
 from backend.apps.reports.mailing import MailError, retry_delivery, send_now, send_test_email
 from backend.apps.reports.models import MailSettings, ReportDelivery, ScheduledReport
 from backend.apps.reports.pdf import build_pdf
@@ -124,7 +130,10 @@ def shift_list(request):
               .select_related('station')
               .annotate(n_ok=_event_count(AccessEvent.Status.OK),
                         n_dup=_event_count(AccessEvent.Status.DUPLICADO),
-                        n_denied=_event_count(AccessEvent.Status.NO_AUTORIZADO))
+                        n_denied=_event_count(AccessEvent.Status.NO_AUTORIZADO),
+                        # de las válidas, las ingresadas a mano desde el backoffice
+                        n_manual=Count('events', filter=Q(events__status=AccessEvent.Status.OK,
+                                                          events__origin=AccessEvent.Origin.BACKOFFICE)))
               .order_by('-started_at'))
 
     station = None
@@ -179,6 +188,10 @@ def shift_detail(request, pk):
         'n_dup': sum(1 for e in events if e.status == AccessEvent.Status.DUPLICADO),
         'n_denied': sum(1 for e in events if e.status == AccessEvent.Status.NO_AUTORIZADO),
         'n_visitas': sum(1 for e in ok if e.is_visitor),
+        'n_manual': sum(1 for e in ok if e.is_manual),
+        'n_anuladas': sum(1 for e in events if e.is_annulled),
+        # el botón de ingreso manual solo si el usuario puede y el turno lo admite
+        'can_manual': request.user.has_cap('manual_events') and manual.shift_block_reason(shift) is None,
     })
 
 
@@ -192,6 +205,153 @@ def shift_excel(request, pk):
     inicio = timezone.localtime(shift.started_at)
     resp['Content-Disposition'] = f'attachment; filename="Turno_{inicio:%Y%m%d_%H%M}.xlsx"'
     return resp
+
+
+# =====================================================================
+#  Ingreso manual de colaciones (ver reports.manual)
+# =====================================================================
+def _safe_next(request, fallback):
+    back = request.POST.get('next') or request.GET.get('next') or ''
+    if back and url_has_allowed_host_and_scheme(back, allowed_hosts={request.get_host()}):
+        return back
+    return fallback
+
+
+@capability_required('manual_events')
+def manual_event_list(request):
+    """
+    Todas las colaciones ingresadas a mano (válidas y anuladas) en el período, y el
+    acceso para registrar una nueva sobre un turno reciente.
+    """
+    today = timezone.localdate()
+    d_from = _parse_date(request.GET.get('from'), today - timedelta(days=30))
+    d_to = _parse_date(request.GET.get('to'), today)
+    if d_to < d_from:
+        d_from, d_to = d_to, d_from
+    dt_from, dt_to = local_range(d_from, d_to)
+
+    events = (AccessEvent.objects
+              .filter(origin=AccessEvent.Origin.BACKOFFICE,
+                      event_time__gte=dt_from, event_time__lt=dt_to)
+              .select_related('station', 'shift').defer('photo')
+              .order_by('-event_time', '-pk'))
+    station = None
+    if request.GET.get('station'):
+        station = Station.objects.filter(pk=request.GET['station']).first()
+        if station is not None:
+            events = events.filter(station=station)
+    events = list(events)
+    Person.attach_photos_to_events(events)
+
+    # Turnos recientes en los que se puede ingresar: cerrados y con marcaciones
+    since = timezone.now() - timedelta(days=7)
+    recent_shifts = list(Shift.objects
+                         .filter(started_at__gte=since, ended_at__isnull=False, manual_count__isnull=True)
+                         .select_related('station').order_by('-started_at'))
+
+    return render(request, 'reports/manual_list.html', {
+        'events': events,
+        'n_validas': sum(1 for e in events if not e.is_annulled),
+        'n_anuladas': sum(1 for e in events if e.is_annulled),
+        'd_from': d_from,
+        'd_to': d_to,
+        'station': station,
+        'stations': Station.objects.all(),
+        'recent_shifts': recent_shifts,
+        'annul_form': AnnulEventForm(),
+    })
+
+
+@capability_required('manual_events')
+def manual_event_create(request, pk):
+    """
+    Formulario de ingreso manual sobre UN turno. Tras registrar vuelve al mismo
+    formulario (lo normal es tener una lista de varias personas), con las ya registradas
+    a la vista para no repetir.
+    """
+    shift = get_object_or_404(Shift.objects.select_related('station'), pk=pk)
+    block = manual.shift_block_reason(shift)
+    window_start, window_end = manual.shift_window(shift)
+    default_time = timezone.localtime(shift.ended_at or window_end).replace(microsecond=0).time()
+    form = ManualEventForm(request.POST or None, initial={'event_time': default_time})
+
+    selected = None   # la persona elegida, para volver a mostrarla si el formulario falla
+    if request.method == 'POST' and block is None:
+        valid = form.is_valid()
+        person_id = form.cleaned_data.get('person')
+        person = shift.station.persons.filter(pk=person_id).first() if person_id else None
+        if valid:
+            if person is None:
+                form.add_error(None, 'Elige a la persona desde la búsqueda (debe estar en la ficha '
+                                     'de la estación).')
+            else:
+                try:
+                    event = manual.register_manual_event(
+                        shift, person, form.cleaned_data['event_time'], form.cleaned_data['reason'],
+                        request.user, override=form.cleaned_data['override'], request=request)
+                except manual.ManualEntryError as exc:
+                    form.add_error(None, str(exc))
+                else:
+                    messages.success(
+                        request,
+                        f'Colación de {event.person_name or event.employee_no} registrada a las '
+                        f'{timezone.localtime(event.event_time):%H:%M:%S} como ingreso manual. '
+                        'Puedes registrar a la siguiente persona.')
+                    return redirect('reports:manual_event_create', pk=shift.pk)
+        if person is not None:
+            checks = manual.person_checks(shift, person, manual.served_in_service(shift))
+            selected = {
+                'id': person.pk, 'name': person.name or f'Nº {person.employee_no}',
+                'employee_no': person.employee_no, 'company': person.company or '',
+                'meal_policy': person.meal_policy_text, 'authorized': person.authorized,
+                'photo_url': person.photo_url, 'blocked': checks['blocked'],
+                'warnings': checks['warnings'],
+            }
+
+    manual_events = manual.manual_events_of(shift)
+    Person.attach_photos_to_events(manual_events)
+    return render(request, 'reports/manual_form.html', {
+        'shift': shift,
+        'form': form,
+        'block_reason': block,
+        'window_start': window_start,
+        'window_end': window_end,
+        'is_old': manual.is_old(shift),
+        'n_ok': shift.events.filter(status=AccessEvent.Status.OK).count(),
+        'manual_events': manual_events,
+        'selected_json': json.dumps(selected) if selected else 'null',
+        'annul_form': AnnulEventForm(),
+    })
+
+
+@capability_required('manual_events')
+def manual_event_persons(request, pk):
+    """Búsqueda de personas de la ficha para el formulario (JSON), con sus avisos."""
+    shift = get_object_or_404(Shift.objects.select_related('station'), pk=pk)
+    return JsonResponse({'results': manual.search_persons(shift, request.GET.get('q', ''))})
+
+
+@capability_required('manual_events')
+@require_POST
+def manual_event_annul(request, pk):
+    """Anula un ingreso manual (la fila queda, con quién y por qué)."""
+    event = get_object_or_404(
+        AccessEvent.objects.defer('photo').select_related('shift', 'station'),
+        pk=pk, origin=AccessEvent.Origin.BACKOFFICE)
+    fallback = (reverse('reports:manual_event_create', args=[event.shift_id]) if event.shift_id
+                else reverse('reports:manual_event_list'))
+    form = AnnulEventForm(request.POST)
+    if not form.is_valid():
+        messages.error(request, 'Indica el motivo de la anulación (al menos 5 caracteres).')
+        return redirect(_safe_next(request, fallback))
+    try:
+        manual.annul_manual_event(event, form.cleaned_data['reason'], request.user, request=request)
+    except manual.ManualEntryError as exc:
+        messages.error(request, str(exc))
+    else:
+        messages.success(request, f'Colación de {event.person_name or event.employee_no} anulada. '
+                                  'La fila se conserva marcada como anulada.')
+    return redirect(_safe_next(request, fallback))
 
 
 # =====================================================================
@@ -233,6 +393,10 @@ def _schedule_form(request, obj=None):
         if obj is None:
             report.created_by = request.user
         report.save()
+        audit.log('correo.envio_guardado',
+                  f'Envío programado «{report.name}» {"creado" if obj is None else "editado"}: '
+                  f'{"activo" if report.is_active else "en pausa"}, destinatarios {report.recipients}.',
+                  request=request)
         if report.next_run_at:
             when = timezone.localtime(report.next_run_at)
             messages.success(request, f'Envío «{report.name}» guardado. Próximo envío: '
@@ -260,6 +424,8 @@ def mail_schedule_delete(request, pk):
     report = get_object_or_404(ScheduledReport, pk=pk)
     if request.method == 'POST':
         report.delete()   # el historial de envíos se conserva
+        audit.log('correo.envio_eliminado', f'Envío programado «{report.name}» eliminado.',
+                  request=request, level=audit.WARNING)
         messages.success(request, f'Envío «{report.name}» eliminado.')
         return redirect('reports:mail_schedule_list')
     return render(request, 'webapp/confirm_delete.html', {
@@ -272,6 +438,12 @@ def mail_schedule_send(request, pk):
     """«Enviar ahora»: el período que cubriría un envío hecho hoy, sin esperar al programador."""
     report = get_object_or_404(ScheduledReport, pk=pk)
     delivery = send_now(report, user=request.user)
+    audit.log('correo.envio_manual',
+              f'«Enviar ahora» del envío «{report.name}» ({delivery.period_text}): '
+              f'{delivery.get_status_display()}'
+              + (f' · {delivery.error}' if delivery.error else '') + '.',
+              request=request,
+              level=audit.INFO if delivery.status == ReportDelivery.Status.SENT else audit.ERROR)
     if delivery.status == ReportDelivery.Status.SENT:
         messages.success(request, f'Informe {delivery.period_text} enviado a '
                                   f'{len(delivery.recipient_list)} destinatario(s).')
@@ -321,6 +493,9 @@ def mail_settings(request):
         obj = form.save(commit=False)
         obj.updated_by = request.user
         obj.save()
+        audit.log('correo.servidor_guardado',
+                  f'Servidor de correo guardado: {obj.host}:{obj.port}, remitente {obj.from_email}.',
+                  request=request)
         messages.success(request, 'Servidor de correo guardado. Envía un correo de prueba para '
                                   'confirmar que funciona.')
         return redirect('reports:mail_settings')

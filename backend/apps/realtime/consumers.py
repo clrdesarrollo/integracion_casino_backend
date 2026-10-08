@@ -112,13 +112,20 @@ class StationConsumer(AsyncWebsocketConsumer):
 
     async def connect(self):
         self.group = None
+        self.station_id = None
+        self.connected_at = None
         station_id = await self._station_from_key()
         if station_id is None:
             await self.close(code=4401)
             return
+        self.station_id = station_id
         self.group = station_group(station_id)
         await self.channel_layer.group_add(self.group, self.channel_name)
         await self.accept()
+        self.connected_at = time.monotonic()
+        # El canal es la señal de vida más inmediata del terminal: conectarse y caerse
+        # quedan en la bitácora (un corte de energía se ve aquí antes que en ningún lado).
+        await self._audit('terminal.conectado', 'El terminal se conectó al canal de órdenes.')
         # lo que se pidió mientras el terminal no estaba conectado
         if await self._refresh_pending(station_id):
             await self.send(text_data=json.dumps({'command': 'sync_persons'}))
@@ -126,6 +133,31 @@ class StationConsumer(AsyncWebsocketConsumer):
     async def disconnect(self, code):
         if self.group:
             await self.channel_layer.group_discard(self.group, self.channel_name)
+        if self.station_id is not None and self.connected_at is not None:
+            elapsed = time.monotonic() - self.connected_at
+            await self._audit(
+                'terminal.desconectado',
+                f'El terminal se desconectó del canal de órdenes (código {code}) tras '
+                f'{self._elapsed_text(elapsed)} conectado. Si no fue un reinicio ordenado, '
+                'el kiosco se apagó o perdió la red cerca de esta hora.',
+                level='warning', data={'codigo': code, 'conectado_segundos': int(elapsed)})
+
+    @staticmethod
+    def _elapsed_text(seconds):
+        from datetime import timedelta
+
+        from backend.apps.core.audit import duration_text
+        return duration_text(timedelta(seconds=seconds))
+
+    @database_sync_to_async
+    def _audit(self, action, summary, level='info', data=None):
+        from backend.apps.core import audit
+        from backend.apps.core.models import Station
+
+        station = Station.objects.filter(pk=self.station_id).first()
+        client = self.scope.get('client') or ('', 0)
+        audit.log(action, summary, station=station, level=level, data=data,
+                  ip=str(client[0] or '')[:45])
 
     async def receive(self, text_data=None, bytes_data=None):
         if text_data == 'ping':

@@ -111,6 +111,7 @@ def build_pdf(data: ReportData, titulo: str) -> bytes:
         stat(data.duplicados, 'Intentos duplicados', '#9B6829'),
         stat(data.visitas, 'Visitas (tarjeta)', '#3A3A3C'),
         stat(data.manuales, 'Ingreso manual', '#3A3A3C'),
+        stat(data.backoffice, 'Ingresadas a mano', '#3A3A3C'),
         stat(data.no_autorizados, 'No autorizados', '#C8102E'),
     ]
     # cada tarjeta es una mini-tabla en una columna
@@ -154,7 +155,9 @@ def build_pdf(data: ReportData, titulo: str) -> bytes:
     if data.por_turno:
         story.append(Paragraph('Colaciones por turno', section))
         story.append(Paragraph(
-            '«Manual» = cantidad registrada por la cocinera en un turno sin marcación.',
+            '«A mano» = de las colaciones en turno, las ingresadas desde el backoffice porque el '
+            'kiosco no pudo marcarlas. «Manual» = cantidad registrada por la cocinera en un turno '
+            'sin marcación.',
             small))
         story.append(Spacer(1, 2 * mm))
         rows = []
@@ -169,12 +172,12 @@ def build_pdf(data: ReportData, titulo: str) -> bytes:
                 fin = _local(s.ended_at) if s.ended_at else 'en curso'
                 if s.end_mode:
                     fin += f' ({s.end_mode})'
-            rows.append([s.name, ini, fin, str(r.en_turno),
+            rows.append([s.name, ini, fin, str(r.en_turno), str(r.backoffice) if r.backoffice else '·',
                          str(r.manuales), str(r.total)])
         story.append(data_table(
-            ['Turno', 'Inicio', 'Término', 'En turno', 'Manual', 'Total'],
-            rows, [36 * mm, 40 * mm, 47 * mm, 19 * mm, 19 * mm, 19 * mm],
-            right_cols=[3, 4, 5]))
+            ['Turno', 'Inicio', 'Término', 'En turno', 'A mano', 'Manual', 'Total'],
+            rows, [34 * mm, 38 * mm, 42 * mm, 18 * mm, 18 * mm, 18 * mm, 18 * mm],
+            right_cols=[3, 4, 5, 6]))
 
     meal_types = data.meal_types
     n = len(meal_types)
@@ -259,6 +262,35 @@ def build_pdf(data: ReportData, titulo: str) -> bytes:
         story.append(data_table(headers, rows, widths, right_cols=[len(headers) - 1]))
         if any(not r.registrada for r in data.visitas_detalle):
             story.append(Paragraph('* hora de la primera colación: la tarjeta se usó sin registrar la entrega.', small))
+
+    # ---- Colaciones ingresadas a mano desde el backoffice ----
+    if data.backoffice_detalle:
+        story.append(Paragraph('Colaciones ingresadas a mano', section))
+        story.append(Paragraph(
+            'Registradas en el backoffice porque el kiosco no pudo marcarlas (p. ej. corte de '
+            'energía). Cuentan como servidas y están incluidas en los totales por turno, empresa '
+            'y persona. Se indica quién las registró y por qué.', small))
+        story.append(Spacer(1, 2 * mm))
+        cell = ParagraphStyle('mcell', parent=styles['Normal'], fontSize=8, leading=10)
+        con_estacion = data.station is None
+        headers = ['Colación', 'Turno', 'Nombre', 'Nº', 'Empresa'] \
+            + (['Estación'] if con_estacion else []) + ['Registró', 'Motivo']
+        rows = []
+        for e in data.backoffice_detalle:
+            registro = escape(e.entered_by_name or '—')
+            if e.created_at:
+                registro += f'<br/><font color="#6E6E73">{_local(e.created_at)}</font>'
+            row = [_local(e.event_time), Paragraph(escape(e.shift.name if e.shift else '—'), cell),
+                   Paragraph(escape(e.person_name or '(desconocido)'), cell), e.employee_no,
+                   Paragraph(escape(e.company or '—'), cell)]
+            if con_estacion:
+                row.append(Paragraph(escape(e.station.name), cell))
+            row += [Paragraph(registro, cell), Paragraph(escape(e.entry_reason or '—'), cell)]
+            rows.append(row)
+        widths = [22 * mm, 20 * mm, 36 * mm, 20 * mm, 22 * mm] \
+            + ([20 * mm] if con_estacion else []) + [26 * mm]
+        widths.append(186 * mm - sum(widths))
+        story.append(data_table(headers, rows, widths))
 
     # ---- No autorizados (con el motivo) ----
     if data.no_autorizados_detalle:

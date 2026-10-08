@@ -93,7 +93,8 @@ Content-Type: application/json
   medianoche pertenece al día en que empezó), `end_reason` ∈ `manual`, `reemplazado`,
   `expirado`, `interrumpido`, y `reopened_from_uid` apunta a la apertura original cuando el
   turno se reabrió porque quedó un comensal fuera.
-- `status` ∈ `Ok`, `Duplicado`, `SinTurno`, `NoAutorizado`. Los eventos aceptan además
+- `status` ∈ `Ok`, `Duplicado`, `SinTurno`, `NoAutorizado` (`Anulado` existe solo en el
+  servidor, para ingresos manuales anulados: el terminal no lo manda). Los eventos aceptan además
   `is_visitor` (marcación de visita con tarjeta RFID), `detail` (motivo del estado) y
   `photo_b64` (foto en base64, **solo en marcaciones de visita**: son pagos adicionales y la
   foto es la constancia). Una foto ilegible se descarta sin rechazar el lote.
@@ -152,6 +153,8 @@ Permisos disponibles (catálogo en `backend/apps/core/access.py`):
 | Administrar visitas | eliminar registros de visita e inventario de tarjetas |
 | Turnos, empresas y estaciones | configuración compartida con el kiosco, estaciones y API keys |
 | Usuarios y roles | alta de usuarios y definición de roles |
+| Ingreso manual de colaciones | registrar a mano una colación que el kiosco no pudo marcar (y anularla) |
+| Bitácora | todo lo que pasa en el sistema, en orden de tiempo |
 
 Vienen tres roles de sistema (se pueden ajustar, no eliminar): **Administrador del sistema**
 (`admin`, acceso total y fijo), **Gerente de administración** (`gerente`) y **Personal del
@@ -291,6 +294,75 @@ correo falla, se reintenta a los 10 y a los 30 minutos; tras el tercer intento q
 «Falló» y se puede reintentar a mano desde el historial. Si el programador estuvo detenido y
 pasaron varias fechas, solo se manda la más reciente. Las horas son las de `TIME_ZONE`.
 Si el servicio no está corriendo, Envíos por correo y Servidor de correo lo advierten.
+
+---
+
+## Ingreso manual de colaciones
+
+Cuando el kiosco no pudo registrar colaciones que sí se sirvieron (un corte de energía lo
+apagó, por ejemplo), se ingresan a mano en **Informes → Ingresos manuales** o con el botón
+**Ingresar colación** del detalle de un turno. Requiere el permiso **Ingreso manual de
+colaciones** (`manual_events`), que de partida solo tiene el administrador.
+
+Reglas, pensadas para que un error no ensucie la información:
+
+- Se registra **sobre el turno** en que se sirvió, y solo sobre turnos **cerrados** con
+  marcaciones (no sobre un turno en curso, que el terminal sigue administrando, ni sobre
+  un registro de ingreso manual de la cocinera).
+- La persona se **busca en la ficha de HikCentral** por nombre (sin importar tildes) o por
+  RUT (con o sin puntos, guion y dígito verificador); no se escriben nombres a mano.
+- **Una colación por persona y servicio**: si ya tiene una válida en el turno o en una
+  reapertura del mismo, se bloquea.
+- La hora debe caer dentro del turno (hasta su término programado, si el terminal lo cerró
+  antes por haberse caído).
+- Lo que el terminal habría rechazado —persona no autorizada, «sin colación», «solo
+  almuerzo» en otro turno, empresa fuera del turno— se avisa y exige marcar «Registrar de
+  todos modos»; queda anotado en la bitácora.
+- Motivo y confirmación obligatorios. La marcación nace con origen `backoffice`, quién la
+  registró y cuándo, y método «Manual (backoffice)».
+- **No se edita ni se borra**: si estuvo mal, se **anula** con motivo; la fila queda
+  (estado `Anulado`) y deja de contar.
+
+En el detalle del turno, en el informe (pantalla, PDF y Excel) y en el Excel del turno la
+colación figura marcada como ingreso manual, con quién la registró y por qué. El informe
+trae el indicador «Ingresadas a mano», la columna «A mano» por turno y una sección con el
+detalle; en los totales por empresa y por persona cuenta como cualquier otra servida.
+
+---
+
+## Bitácora
+
+El menú **Bitácora** (`/bitacora/`, permiso `audit`, de partida solo el administrador) es el
+registro de todo lo que pasa, a la hora real del hecho, con filtros por período, categoría,
+estación, nivel y texto. Las entradas no se editan ni se borran (tampoco desde `/admin`).
+
+| Categoría | Qué anota |
+|---|---|
+| Terminal | se conectó o se desconectó del canal de órdenes (`/ws/station/`), volvió a sincronizar tras más de 15 min sin contacto, se enroló, y cada **reinicio** con la última hora en que la app estuvo viva (lo informa el propio terminal) |
+| Turnos | cada apertura y cierre tal como los informa el terminal, con el motivo; un cierre «interrumpido» queda como aviso |
+| Colaciones | ingresos manuales y anulaciones, con persona, hora, motivo y avisos ignorados |
+| Visitas | tarjeta entregada, devuelta, registro eliminado |
+| Configuración | estaciones, API keys, turnos programados (antes/después), prórroga, modo de pruebas, turnos automáticos, tarjetas de visita, actualización de personas |
+| Usuarios y roles | altas, cambios de rol/estado/contraseña, bajas; permisos agregados y quitados a cada rol |
+| Sesiones | inicios, intentos fallidos (solo el correo) y cierres de sesión |
+| Correo | servidor guardado, envíos programados y «enviar ahora» |
+
+Para reconstruir un incidente como un corte de energía: filtra por **Terminal** y verás a
+qué hora se desconectó el kiosco, cuándo arrancó de nuevo y desde cuándo estaba caído; en
+**Turnos**, el cierre interrumpido; y en **Colaciones**, lo que se ingresó a mano después.
+
+El terminal manda los reinicios en la sincronización (`incidents`, idempotentes por `uid`):
+
+```json
+"incidents": [
+  {"kind": "restart", "uid": "9a1f…", "at": "2026-10-07T09:01:50",
+   "last_alive_at": "2026-10-07T07:41:10"}
+]
+```
+
+Desde esta versión el kiosco guarda un **latido** cada 30 s; con él, un turno que quedó
+abierto cuando la app se cayó se cierra como «interrumpido» a la **última hora en que la
+app estuvo viva**, no a la hora en que la volvieron a encender.
 
 ---
 

@@ -27,7 +27,9 @@ TICKETS = ['/monitor/', '/monitor/turnos/', '/visitas/', '/visitas/colaciones/',
 CONFIG = ['/turnos/', '/estaciones/', '/usuarios/', '/visitas/tarjetas/',
           # envíos del informe por correo y servidor SMTP: de partida, solo el administrador
           '/reportes/envios/', '/reportes/envios/nuevo/', '/reportes/envios/historial/',
-          '/reportes/correo/']
+          '/reportes/correo/',
+          # ingreso manual de colaciones y bitácora: de partida, solo el administrador
+          '/reportes/ingresos-manuales/', '/bitacora/']
 
 
 def crear_usuario(email, role):

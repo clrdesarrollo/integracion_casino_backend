@@ -49,6 +49,7 @@ def build_excel(data: ReportData, titulo: str) -> bytes:
         ('Intentos duplicados', data.duplicados),
         ('Visitas (tarjeta)', data.visitas),
         ('Ingreso manual', data.manuales),
+        ('Ingresadas a mano (backoffice)', data.backoffice),
         ('No autorizados', data.no_autorizados),
     ]
     for i, (label, val) in enumerate(resumen, start=row + 1):
@@ -82,10 +83,10 @@ def build_excel(data: ReportData, titulo: str) -> bytes:
         modo_ini = '' if s.is_manual_entry else s.start_mode
         modo_fin = '' if s.is_manual_entry else s.end_mode
         turno_rows.append((s.name, _local_str(s.started_at), modo_ini, fin, modo_fin,
-                           r.en_turno, r.manuales, r.total))
+                           r.en_turno, r.backoffice, r.manuales, r.total))
     sheet_table('Por turno',
                 ['Turno', 'Inicio', 'Modo inicio', 'Término', 'Modo término',
-                 'En turno', 'Manual', 'Total'],
+                 'En turno', 'A mano (backoffice)', 'Manual', 'Total'],
                 turno_rows)
 
     # ---- Por empresa (con composición por turno) ----
@@ -124,6 +125,24 @@ def build_excel(data: ReportData, titulo: str) -> bytes:
     w.set_column(1, 1, 26)
     w.set_column(4, 5, 24)
     w.set_column(13, 13, 40)
+
+    # ---- Colaciones ingresadas a mano desde el backoffice ----
+    w = sheet_table('Ingresadas a mano',
+                    ['Colación', 'Turno', 'Nombre', 'Nº empleado', 'Empresa', 'Estación',
+                     'Registrada por', 'Registrada el', 'Motivo'],
+                    [(_local_str(e.event_time, '%d-%m-%Y %H:%M:%S'),
+                      e.shift.name if e.shift else '',
+                      e.person_name or '(desconocido)',
+                      e.employee_no,
+                      e.company or '',
+                      e.station.name,
+                      e.entered_by_name or '',
+                      _local_str(e.created_at),
+                      e.entry_reason or '')
+                     for e in data.backoffice_detalle])
+    w.set_column(0, 0, 20)
+    w.set_column(2, 2, 34)
+    w.set_column(8, 8, 60)
 
     # ---- No autorizados (con el motivo) ----
     w = sheet_table('No autorizados',
@@ -173,6 +192,8 @@ def build_shift_excel(shift, events) -> bytes:
         ficha.append(('Colaciones (ingreso manual)', shift.manual_count))
     else:
         ficha.append(('Colaciones válidas', sum(1 for e in events if e.status == 'Ok')))
+        ficha.append(('De ellas, ingresadas a mano (backoffice)',
+                      sum(1 for e in events if e.status == 'Ok' and e.is_manual)))
         ficha.append(('Marcaciones', len(events)))
     for i, (label, value) in enumerate(ficha, start=2):
         ws.write(i, 0, label, f_h)
@@ -182,15 +203,24 @@ def build_shift_excel(shift, events) -> bytes:
             ws.write(i, 1, value, f_cell)
 
     w = wb.add_worksheet('Marcaciones')
-    headers = ['Fecha', 'Hora', 'Persona', 'Nº', 'Empresa', 'Método', 'Estado', 'Visita', 'Detalle']
+    headers = ['Fecha', 'Hora', 'Persona', 'Nº', 'Empresa', 'Método', 'Estado', 'Visita', 'Detalle',
+               'Origen', 'Registrada por', 'Registrada el', 'Motivo del ingreso manual',
+               'Anulada por', 'Anulada el', 'Motivo de la anulación']
     for c, h in enumerate(headers):
         w.write(0, c, h, f_h)
-    for c, width in enumerate([12, 10, 34, 14, 26, 16, 20, 8, 60]):
+    for c, width in enumerate([12, 10, 34, 14, 26, 18, 20, 8, 40, 20, 24, 18, 50, 24, 18, 50]):
         w.set_column(c, c, width)
     for r, e in enumerate(events, start=1):
         row = [_local_str(e.event_time, '%d-%m-%Y'), _local_str(e.event_time, '%H:%M:%S'),
                e.person_name or e.employee_no, e.employee_no, e.company, e.verify_method,
-               e.get_status_display(), 'sí' if e.is_visitor else '', e.detail or '']
+               e.get_status_display(), 'sí' if e.is_visitor else '', e.detail or '',
+               'ingreso manual (backoffice)' if e.is_manual else 'terminal',
+               e.entered_by_name if e.is_manual else '',
+               _local_str(e.created_at) if e.is_manual else '',
+               e.entry_reason if e.is_manual else '',
+               e.annulled_by_name if e.is_annulled else '',
+               _local_str(e.annulled_at) if e.is_annulled else '',
+               e.annul_reason if e.is_annulled else '']
         for c, value in enumerate(row):
             w.write(r, c, value, f_cell)
 

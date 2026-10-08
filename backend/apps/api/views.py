@@ -13,9 +13,10 @@ from rest_framework.views import APIView
 
 from backend.apps.api.permissions import HasStationAPIKey
 from backend.apps.api.serializers import EnrollSerializer, SyncSerializer
+from backend.apps.core import audit
 from backend.apps.core.config_sync import reconcile
 from backend.apps.core.models import (
-    AccessEvent, Person, PersonPhoto, Shift, Station, StationAPIKey, Visit,
+    AccessEvent, AuditLog, Person, PersonPhoto, Shift, Station, StationAPIKey, Visit,
 )
 from backend.apps.realtime.broadcast import broadcast_events
 
@@ -82,6 +83,10 @@ class EnrollView(APIView):
         _, key = StationAPIKey.objects.create_key(
             name=f'enrolado {timezone.localtime():%d-%m-%Y %H:%M}', station=station,
         )
+        audit.log('terminal.enrolado',
+                  f'Un terminal se enroló en la estación «{station.name}» (ID {station.device_id}); '
+                  'recibió una API key nueva y la anterior quedó revocada.',
+                  station=station, ip=request.META.get('REMOTE_ADDR', ''))
 
         return Response({
             'validate': True,
@@ -108,6 +113,10 @@ def upsert_by_uid(model, station, uid, remote_id, defaults, same_as):
     que no cambian, como la hora). Es lo que distingue "este registro ya lo respaldé antes
     de la migración" de "recrearon la base del terminal y el remote_id volvió a empezar":
     sin esa comprobación, la primera marcación de la base nueva pisaría una histórica.
+
+    Devuelve (objeto, creado, previo): `previo` son los valores que tenían los campos de
+    `defaults` antes de actualizar (None si se creó), para detectar transiciones (p. ej. un
+    turno que pasa de abierto a cerrado) y anotarlas en la bitácora.
     """
     if not uid:
         # Solo se toca lo que tampoco tiene uid: nunca se le quita la identidad a un
@@ -116,11 +125,12 @@ def upsert_by_uid(model, station, uid, remote_id, defaults, same_as):
         if obj is None:
             return model.objects.create(
                 station=station, uid='', remote_id=remote_id, **defaults,
-            ), True
+            ), True, None
+        previous = {field: getattr(obj, field) for field in defaults}
         for field, value in defaults.items():
             setattr(obj, field, value)
         obj.save()
-        return obj, False
+        return obj, False, previous
 
     obj = model.objects.filter(station=station, uid=uid).first()
     if obj is None:
@@ -130,14 +140,78 @@ def upsert_by_uid(model, station, uid, remote_id, defaults, same_as):
     if obj is None:
         return model.objects.create(
             station=station, uid=uid, remote_id=remote_id, **defaults,
-        ), True
+        ), True, None
 
+    previous = {field: getattr(obj, field) for field in defaults}
     obj.uid = uid
     obj.remote_id = remote_id
     for field, value in defaults.items():
         setattr(obj, field, value)
     obj.save()
-    return obj, False
+    return obj, False, previous
+
+
+def _log_shift_changes(station, shift, created, previous, received_at):
+    """
+    Bitácora de turnos tal como los informa el terminal: la apertura (cuando llega por
+    primera vez) y el cierre (cuando pasa de abierto a cerrado), cada uno a su hora real.
+    """
+    local = audit.local_text
+    if shift.is_manual_entry:
+        if created:
+            audit.log('turno.ingreso_manual',
+                      f'Registro de ingreso manual: {shift.name}, {shift.manual_count} colaciones '
+                      f'({local(shift.started_at)}).',
+                      station=station, shift=shift, at=shift.started_at,
+                      data={'colaciones': shift.manual_count, 'recibido': received_at.isoformat()})
+        return
+    if created:
+        how = 'por horario' if shift.auto else 'desde la pantalla del terminal'
+        if shift.is_reopening:
+            how = 'reapertura desde la pantalla del terminal'
+        audit.log('turno.abierto',
+                  f'Turno {shift.name} iniciado a las {local(shift.started_at)} ({how}).',
+                  station=station, shift=shift, at=shift.started_at,
+                  data={'auto': shift.auto, 'reapertura': shift.is_reopening,
+                        'recibido': received_at.isoformat()})
+    was_open = created or previous is None or previous.get('ended_at') is None
+    if shift.ended_at is not None and was_open:
+        reason = shift.get_end_reason_display() if shift.end_reason else 'sin motivo informado'
+        level = audit.WARNING if shift.end_reason == Shift.EndReason.INTERRUPTED else audit.INFO
+        summary = f'Turno {shift.name} cerrado a las {local(shift.ended_at)}: {reason}.'
+        if shift.end_reason == Shift.EndReason.INTERRUPTED:
+            summary += (' La hora es la de cierre registrada por el terminal al volver a arrancar; '
+                        'revisa en la bitácora cuándo se desconectó.')
+        audit.log('turno.cerrado', summary, station=station, shift=shift, at=shift.ended_at,
+                  level=level, data={'motivo': shift.end_reason, 'inicio': shift.started_at.isoformat(),
+                                     'recibido': received_at.isoformat()})
+
+
+def _log_incidents(station, incidents):
+    """Hechos informados por el terminal (reinicios). Idempotente por uid."""
+    for inc in incidents:
+        uid = inc['uid']
+        if AuditLog.objects.filter(station=station, action__startswith='terminal.',
+                                   data__uid=uid).exists():
+            continue
+        if inc['kind'] == 'restart':
+            last_alive = inc.get('last_alive_at')
+            summary = f'El terminal arrancó a las {audit.local_text(inc["at"])}.'
+            data = {'uid': uid, 'arranque': inc['at'].isoformat()}
+            if last_alive is not None:
+                gap = inc['at'] - last_alive
+                summary += (f' Su última señal de vida antes de eso fue a las '
+                            f'{audit.local_text(last_alive)} (estuvo caído unos '
+                            f'{audit.duration_text(gap)}).')
+                data['ultima_senal'] = last_alive.isoformat()
+                data['caido_segundos'] = int(gap.total_seconds())
+            if inc.get('detail'):
+                summary += f' {inc["detail"]}'
+            audit.log('terminal.reinicio', summary, station=station, at=inc['at'],
+                      level=audit.WARNING, data=data)
+        else:
+            audit.log(f'terminal.{inc["kind"][:40]}', inc.get('detail') or inc['kind'],
+                      station=station, at=inc['at'], data={'uid': uid})
 
 
 class SyncView(APIView):
@@ -214,10 +288,11 @@ class SyncView(APIView):
                 station.persons_refresh_requested_at = None
                 station.save(update_fields=['persons_refresh_requested_at'])
 
+            received_at = timezone.now()
             for s in data['shifts']:
                 # El uid es la clave estable (sobrevive a que se recree la base del
                 # terminal); un terminal antiguo no lo manda y se cae al remote_id.
-                _, created = upsert_by_uid(
+                shift_obj, created, previous = upsert_by_uid(
                     Shift, station, (s.get('uid') or '').strip(), s['remote_id'],
                     {
                         'name': s['name'],
@@ -234,6 +309,7 @@ class SyncView(APIView):
                     same_as=lambda old, s=s: old.started_at == s['started_at'],
                 )
                 result['shifts']['created' if created else 'updated'] += 1
+                _log_shift_changes(station, shift_obj, created, previous, received_at)
 
             # Mapas de turnos de la estación para resolver la FK de los eventos: por uid
             # (preferente) y por remote_id (terminales antiguos).
@@ -267,7 +343,7 @@ class SyncView(APIView):
                 if photo_b64:
                     defaults['photo'] = base64.b64decode(photo_b64)
 
-                obj, created = upsert_by_uid(
+                obj, created, _previous = upsert_by_uid(
                     AccessEvent, station, (e.get('uid') or '').strip(), e['remote_id'], defaults,
                     # la misma marcación respaldada antes de los uid: misma persona y hora
                     same_as=lambda old, e=e: (old.event_time == e['event_time']
@@ -276,6 +352,10 @@ class SyncView(APIView):
                 result['events']['created' if created else 'updated'] += 1
                 if created:
                     created_events.append(obj)
+
+            # Reinicios y otros hechos que el terminal informa para la bitácora
+            if data.get('incidents'):
+                _log_incidents(station, data['incidents'])
 
             # Tarjetas de visita de un solo uso: primero las cargas creadas en el terminal
             # (deben existir antes de marcarlas) y luego las que ya se gastaron.

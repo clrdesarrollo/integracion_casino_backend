@@ -15,6 +15,7 @@
   </h1>
   <div>
     <a href="{% url 'reports:shift_list' %}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left"></i> Detalle de colaciones</a>
+    {% if can_manual %}<a href="{% url 'reports:manual_event_create' shift.pk %}" class="btn btn-sm btn-outline-primary" title="Registrar a mano una colación que el kiosco no pudo marcar"><i class="bi bi-pencil-square"></i> Ingresar colación</a>{% endif %}
     <a href="{% url 'reports:shift_excel' shift.pk %}" class="btn btn-sm btn-outline-success"><i class="bi bi-file-excel"></i> Excel</a>
   </div>
 </div>
@@ -66,7 +67,14 @@
     <div class="value is-info">{{ n_visitas }}</div><div class="label">Visitas (tarjeta)</div></div></div></div>
   <div class="col"><div class="card stat-card shadow-sm"><div class="card-body">
     <div class="value is-danger">{{ n_denied }}</div><div class="label">No autorizados</div></div></div></div>
+  {% if n_manual or n_anuladas %}
+  <div class="col"><div class="card stat-card shadow-sm"><div class="card-body">
+    <div class="value is-info">{{ n_manual }}</div><div class="label">Ingresadas a mano{% if n_anuladas %} <span class="text-muted">· {{ n_anuladas }} anulada{{ n_anuladas|pluralize }}</span>{% endif %}</div></div></div></div>
+  {% endif %}
 </div>
+{% if n_manual %}
+<p class="ds-caption"><i class="bi bi-pencil-square"></i> Las colaciones válidas incluyen {{ n_manual }} ingresada{{ n_manual|pluralize }} a mano desde el backoffice (marcadas en la lista con quién las registró y por qué).</p>
+{% endif %}
 
 <div class="card shadow-sm">
   <div class="card-header d-flex justify-content-between align-items-center gap-3">
@@ -78,7 +86,7 @@
     <thead><tr><th>Hora</th><th></th><th>Persona</th><th>Nº</th><th>Empresa</th><th>Método</th><th>Estado</th></tr></thead>
     <tbody id="evRows">
       {% for ev in events %}
-      <tr data-search="{{ ev.person_name }} {{ ev.company }} {{ ev.employee_no }}">
+      <tr data-search="{{ ev.person_name }} {{ ev.company }} {{ ev.employee_no }}{% if ev.is_manual %} manual{% endif %}"{% if ev.is_annulled %} class="text-muted"{% endif %}>
         <td class="text-nowrap fw-semibold">{{ ev.event_time|date:"H:i:s" }}</td>
         <td>
           {% if ev.person_photo_url %}<img src="{{ ev.person_photo_url }}" alt="" loading="lazy" class="ev-thumb">
@@ -88,13 +96,16 @@
           {% if ev.is_visitor %}<span class="badge bg-info ms-1">visita</span>{% endif %}</td>
         <td><code>{{ ev.employee_no }}</code></td>
         <td>{{ ev.company|default:"—" }}</td>
-        <td>{{ ev.verify_method|default:"—" }}</td>
+        <td>{% if ev.is_manual %}<span class="badge bg-info" title="{{ ev.manual_note }}"><i class="bi bi-pencil-square"></i> Manual (backoffice)</span>{% else %}{{ ev.verify_method|default:"—" }}{% endif %}</td>
         <td>
           {% if ev.status == 'Ok' %}<span class="badge bg-success">Colación válida</span>
           {% elif ev.status == 'Duplicado' %}<span class="badge bg-warning">Duplicado</span>
           {% elif ev.status == 'NoAutorizado' %}<span class="badge bg-danger">No autorizado</span>
+          {% elif ev.status == 'Anulado' %}<span class="badge bg-secondary">Anulada</span>
           {% else %}<span class="badge bg-secondary">{{ ev.get_status_display }}</span>{% endif %}
-          {% if ev.detail and ev.status != 'Ok' %}<div class="ds-caption">{{ ev.detail }}</div>{% endif %}
+          {% if ev.detail and ev.status != 'Ok' and not ev.is_manual %}<div class="ds-caption">{{ ev.detail }}</div>{% endif %}
+          {% if ev.is_manual %}<div class="ds-caption">{{ ev.manual_note }}</div>{% endif %}
+          {% if ev.is_annulled %}<div class="ds-caption">{{ ev.annul_note }}</div>{% endif %}
         </td>
       </tr>
       {% empty %}

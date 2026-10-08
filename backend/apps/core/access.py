@@ -23,6 +23,11 @@ CAPABILITIES = (
                'Dentro de Informes: programar el envío periódico del informe en PDF por correo '
                '(a cualquier destinatario) y ver el historial de envíos.',
                'Operación', 'reports:mail_schedule_list'),
+    Capability('manual_events', 'Ingreso manual de colaciones',
+               'Dentro de Informes: registrar a mano una colación que se sirvió pero no se pudo '
+               'marcar en el kiosco (p. ej. un corte de energía). Queda marcada como manual, con '
+               'quién la registró y por qué, y se puede anular pero no borrar.',
+               'Operación', 'reports:manual_event_list'),
     Capability('visits', 'Registro de visitas',
                'Entregar y recibir tarjetas de visita (trámite de mesón).',
                'Visitas', 'webapp:visit_list'),
@@ -41,6 +46,10 @@ CAPABILITIES = (
     Capability('mail_server', 'Servidor de correo',
                'Configuración SMTP con la que el sistema envía los correos.',
                'Configuración', 'reports:mail_settings'),
+    Capability('audit', 'Bitácora',
+               'Registro de todo lo que ocurre: turnos abiertos y cerrados, terminal conectado o '
+               'caído, ingresos manuales, cambios de configuración, usuarios y sesiones.',
+               'Configuración', 'webapp:audit_list'),
 )
 
 CAPABILITY_CODES = tuple(c.code for c in CAPABILITIES)

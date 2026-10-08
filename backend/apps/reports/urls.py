@@ -14,6 +14,13 @@ urlpatterns = [
     path('turnos/<int:pk>/', views.shift_detail, name='shift_detail'),
     path('turnos/<int:pk>/excel/', views.shift_excel, name='shift_excel'),
 
+    # Ingreso manual de colaciones: sobre un turno cerrado, eligiendo a la persona de la ficha
+    path('ingresos-manuales/', views.manual_event_list, name='manual_event_list'),
+    path('turnos/<int:pk>/ingreso-manual/', views.manual_event_create, name='manual_event_create'),
+    path('turnos/<int:pk>/ingreso-manual/personas/', views.manual_event_persons,
+         name='manual_event_persons'),
+    path('ingresos-manuales/<int:pk>/anular/', views.manual_event_annul, name='manual_event_annul'),
+
     # Envíos por correo: el informe en PDF cada cierto tiempo, su historial y el servidor SMTP
     path('envios/', views.mail_schedule_list, name='mail_schedule_list'),
     path('envios/nuevo/', views.mail_schedule_create, name='mail_schedule_create'),

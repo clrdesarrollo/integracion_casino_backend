@@ -87,7 +87,8 @@ class EventSyncSerializer(serializers.Serializer):
     verify_method = serializers.CharField(max_length=50, allow_blank=True, required=False, default='')
     card_no = serializers.CharField(max_length=100, allow_blank=True, required=False, default='')
     event_time = serializers.DateTimeField(input_formats=DATETIME_INPUT_FORMATS)
-    status = serializers.ChoiceField(choices=AccessEvent.Status.values)
+    # «Anulado» es un estado del backoffice (ingreso manual anulado): el terminal no lo manda.
+    status = serializers.ChoiceField(choices=AccessEvent.TERMINAL_STATUSES)
     is_visitor = serializers.BooleanField(required=False, default=False)
     detail = serializers.CharField(max_length=300, allow_blank=True, required=False, default='')
     # Foto en base64: solo llega en marcaciones de visita (constancia del pago adicional).
@@ -165,8 +166,27 @@ class CardGrantLocalSerializer(serializers.Serializer):
     )
 
 
+class IncidentSerializer(serializers.Serializer):
+    """
+    Hecho que el terminal informa para la bitácora: por ahora `restart` (la app arrancó;
+    `last_alive_at` es la última hora en que estuvo viva antes de eso, si la sabe). El `uid`
+    lo hace idempotente: reenviarlo no lo duplica.
+    """
+
+    kind = serializers.CharField(max_length=30)
+    uid = serializers.CharField(max_length=40)
+    at = serializers.DateTimeField(input_formats=DATETIME_INPUT_FORMATS)
+    last_alive_at = serializers.DateTimeField(
+        input_formats=DATETIME_INPUT_FORMATS, required=False, allow_null=True, default=None,
+    )
+    detail = serializers.CharField(max_length=300, allow_blank=True, required=False, default='')
+
+
 class SyncSerializer(serializers.Serializer):
     """Payload de sincronización que sube la estación (todo es opcional)."""
+
+    # Hechos para la bitácora (reinicios del terminal). Un terminal antiguo no los manda.
+    incidents = IncidentSerializer(many=True, required=False, default=list)
 
     # IP del terminal en su red local (la de la interfaz con la que llega al servidor).
     # Un terminal antiguo no la manda: se usa la dirección de origen de la petición.

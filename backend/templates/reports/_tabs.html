@@ -8,6 +8,9 @@
     {% if user.caps.shifts %}
     <li class="nav-item"><a class="nav-link {% if tab == 'shifts' %}active{% endif %}" href="{% url 'reports:shift_list' %}"><i class="bi bi-clock-history"></i> Detalle de colaciones</a></li>
     {% endif %}
+    {% if user.caps.manual_events %}
+    <li class="nav-item"><a class="nav-link {% if tab == 'manual' %}active{% endif %}" href="{% url 'reports:manual_event_list' %}"><i class="bi bi-pencil-square"></i> Ingresos manuales</a></li>
+    {% endif %}
     {% if user.caps.report_mail %}
     <li class="nav-item"><a class="nav-link {% if tab == 'mail' %}active{% endif %}" href="{% url 'reports:mail_schedule_list' %}"><i class="bi bi-envelope-paper"></i> Envíos por correo</a></li>
     {% endif %}

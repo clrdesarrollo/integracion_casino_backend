@@ -1,0 +1,287 @@
+{% extends 'base.html' %}
+{% block title %}Ingreso manual · Turno {{ shift.name }} · Casino{% endblock %}
+{% block nav_reports %}active{% endblock %}
+
+{% block content %}
+<style>
+  .ev-thumb { width:34px; height:34px; border-radius:50%; object-fit:cover; display:block; flex:0 0 34px; }
+  .ev-thumb-empty { display:flex; align-items:center; justify-content:center;
+                    background:var(--ds-canvas-soft); color:var(--ds-ink-mute); }
+  #personResults { position:absolute; z-index:20; width:100%; max-height:340px; overflow:auto;
+                   box-shadow:0 8px 24px rgba(0,0,0,.12); }
+  #personResults .list-group-item { display:flex; gap:10px; align-items:center; text-align:left; }
+  .person-meta { font-size:12px; color:var(--ds-ink-mute); }
+  .chk-list { margin:0; padding-left:1.1rem; }
+</style>
+
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+  <h1 class="page-title mb-0"><i class="bi bi-pencil-square"></i> Ingreso manual de colación
+    <span class="ds-caption">· Turno {{ shift.name }} · {{ shift.station.name }}{% if shift.service_date %} · {{ shift.service_date|date:"d-m-Y" }}{% endif %}</span>
+  </h1>
+  <div>
+    <a href="{% url 'reports:shift_detail' shift.pk %}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left"></i> Detalle del turno</a>
+    <a href="{% url 'reports:manual_event_list' %}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-list-ul"></i> Todos los ingresos manuales</a>
+  </div>
+</div>
+
+<div class="alert alert-warning">
+  <strong>Úsalo solo cuando la colación se sirvió y el kiosco no pudo registrarla</strong> (corte de energía, terminal apagado).
+  La persona se elige desde la ficha de HikCentral, se exige motivo y el registro queda marcado como
+  <em>ingreso manual</em> con tu nombre en el detalle del turno, en el informe (pantalla, PDF y Excel) y en la bitácora.
+  No se puede editar ni borrar: si te equivocas, se anula y la fila queda con el motivo.
+</div>
+
+{% if block_reason %}
+<div class="alert alert-danger"><i class="bi bi-slash-circle"></i> No se puede ingresar a mano en este turno. {{ block_reason }}</div>
+{% endif %}
+{% if is_old %}
+<div class="alert alert-info"><i class="bi bi-info-circle"></i> Este turno tiene más de un mes: el informe de ese período puede ya haberse emitido o enviado. Si lo registras, avisa a quien lo recibió.</div>
+{% endif %}
+
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <div class="row g-3">
+      <div class="col-md-3">
+        <div class="ds-caption">Inicio del turno</div>
+        <div>{% include "reports/_shift_start.html" with shift=shift fmt="d-m-Y H:i:s" %}</div>
+      </div>
+      <div class="col-md-3">
+        <div class="ds-caption">Término</div>
+        <div>{% include "reports/_shift_end.html" with shift=shift fmt="d-m-Y H:i:s" %}</div>
+        {% if shift.end_reason and not shift.is_manual_entry %}<div class="ds-caption">{{ shift.get_end_reason_display }}</div>{% endif %}
+      </div>
+      <div class="col-md-3">
+        <div class="ds-caption">Horas aceptadas</div>
+        <div>{{ window_start|date:"H:i:s" }} – {{ window_end|date:"H:i:s" }}</div>
+        {% if window_end != shift.ended_at %}<div class="ds-caption">hasta el término programado del turno</div>{% endif %}
+      </div>
+      <div class="col-md-3">
+        <div class="ds-caption">Colaciones válidas</div>
+        <div>{{ n_ok }} <span class="ds-caption">({{ manual_events|length }} ingreso{{ manual_events|length|pluralize }} manual{{ manual_events|length|pluralize:"es" }}, ver abajo)</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% if not block_reason %}
+<div class="card shadow-sm mb-3">
+  <div class="card-header">Registrar una colación</div>
+  <div class="card-body">
+    {% if form.non_field_errors %}
+      <div class="alert alert-danger">{% for e in form.non_field_errors %}<div>{{ e }}</div>{% endfor %}</div>
+    {% endif %}
+    <form method="post" id="manualForm" autocomplete="off">
+      {% csrf_token %}
+      {{ form.person }}
+
+      <div class="row g-3">
+        <div class="col-lg-7">
+          <label class="form-label" for="personSearch">Persona <span class="text-danger">*</span></label>
+          <div class="position-relative">
+            <input type="search" id="personSearch" class="form-control" placeholder="Escribe el nombre o el RUT (con o sin puntos ni dígito verificador)" aria-label="Buscar persona">
+            <div id="personResults" class="list-group" style="display:none"></div>
+          </div>
+          <div class="form-text">Solo personas de la ficha de la estación. Las tarjetas de visita no se ingresan a mano.</div>
+          {% if form.person.errors %}<div class="text-danger small">{{ form.person.errors|striptags }}</div>{% endif %}
+
+          <div id="personCard" class="border rounded p-3 mt-2" style="display:none"></div>
+        </div>
+
+        <div class="col-lg-5">
+          <label class="form-label" for="{{ form.event_time.id_for_label }}">{{ form.event_time.label }} <span class="text-danger">*</span></label>
+          {{ form.event_time }}
+          <div class="form-text">{{ form.event_time.help_text }} Entre {{ window_start|date:"H:i:s" }} y {{ window_end|date:"H:i:s" }}.</div>
+          {% if form.event_time.errors %}<div class="text-danger small">{{ form.event_time.errors|striptags }}</div>{% endif %}
+        </div>
+
+        <div class="col-12">
+          <label class="form-label" for="{{ form.reason.id_for_label }}">{{ form.reason.label }} <span class="text-danger">*</span></label>
+          {{ form.reason }}
+          <div class="form-text">{{ form.reason.help_text }}</div>
+          {% if form.reason.errors %}<div class="text-danger small">{{ form.reason.errors|striptags }}</div>{% endif %}
+        </div>
+
+        <div class="col-12" id="overrideBox" style="display:none">
+          <div class="form-check border border-warning rounded p-2 ps-4 bg-warning-subtle">
+            {{ form.override }}
+            <label class="form-check-label" for="{{ form.override.id_for_label }}">
+              <strong>{{ form.override.label }}.</strong> El terminal habría rechazado esta marcación por los avisos de arriba; si igual se sirvió la colación, confírmalo aquí. Quedará anotado en la bitácora.
+            </label>
+          </div>
+        </div>
+
+        <div class="col-12">
+          <div class="form-check">
+            {{ form.confirm }}
+            <label class="form-check-label" for="{{ form.confirm.id_for_label }}">{{ form.confirm.label }}</label>
+          </div>
+          {% if form.confirm.errors %}<div class="text-danger small">{{ form.confirm.errors|striptags }}</div>{% endif %}
+        </div>
+
+        <div class="col-12">
+          <button type="submit" id="submitBtn" class="btn btn-primary" disabled><i class="bi bi-check2-circle"></i> Registrar colación</button>
+          <span class="ds-caption ms-2">Al registrar, el formulario vuelve a quedar listo para la siguiente persona.</span>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+{% endif %}
+
+<div class="card shadow-sm">
+  <div class="card-header">Ingresos manuales de este turno <span class="ds-caption fw-normal">— {{ manual_events|length }}</span></div>
+  <div class="table-responsive"><table class="table table-sm table-hover mb-0 align-middle">
+    <thead><tr><th>Hora</th><th></th><th>Persona</th><th>Nº</th><th>Empresa</th><th>Registrada por</th><th>Motivo</th><th>Estado</th><th></th></tr></thead>
+    <tbody>
+      {% for ev in manual_events %}
+      <tr{% if ev.is_annulled %} class="text-muted"{% endif %}>
+        <td class="text-nowrap fw-semibold">{{ ev.event_time|date:"H:i:s" }}</td>
+        <td>{% if ev.person_photo_url %}<img src="{{ ev.person_photo_url }}" alt="" loading="lazy" class="ev-thumb">{% else %}<span class="ev-thumb ev-thumb-empty"><i class="bi bi-person"></i></span>{% endif %}</td>
+        <td>{{ ev.person_name|default:ev.employee_no }}</td>
+        <td><code>{{ ev.employee_no }}</code></td>
+        <td>{{ ev.company|default:"—" }}</td>
+        <td>{{ ev.entered_by_name|default:"—" }}<div class="ds-caption">{{ ev.created_at|date:"d-m-Y H:i" }}</div></td>
+        <td class="small">{{ ev.entry_reason }}</td>
+        <td>
+          {% if ev.is_annulled %}<span class="badge bg-secondary">Anulada</span><div class="ds-caption">{{ ev.annul_note }}</div>
+          {% else %}<span class="badge bg-success">Colación válida</span> <span class="badge bg-info">ingreso manual</span>{% endif %}
+        </td>
+        <td class="text-end">
+          {% if not ev.is_annulled %}
+          <button type="button" class="btn btn-sm btn-outline-danger" data-bs-toggle="modal" data-bs-target="#annulModal"
+                  data-event="{{ ev.pk }}" data-name="{{ ev.person_name|default:ev.employee_no }}">Anular</button>
+          {% endif %}
+        </td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="9" class="text-muted text-center py-3">Este turno no tiene colaciones ingresadas a mano.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+</div>
+
+{% include "reports/_annul_modal.html" with next_url=request.path %}
+
+<script>
+(function () {
+  var input = document.getElementById('personSearch');
+  var results = document.getElementById('personResults');
+  var hidden = document.getElementById('id_person');
+  var card = document.getElementById('personCard');
+  var overrideBox = document.getElementById('overrideBox');
+  var overrideInput = document.getElementById('id_override');
+  var submitBtn = document.getElementById('submitBtn');
+  if (!input || !hidden) return;
+  var url = "{% url 'reports:manual_event_persons' shift.pk %}";
+  var timer = null, lastQuery = '', current = null;
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c];
+    });
+  }
+  function thumb(p) {
+    return p.photo_url
+      ? '<img src="' + esc(p.photo_url) + '" alt="" class="ev-thumb">'
+      : '<span class="ev-thumb ev-thumb-empty"><i class="bi bi-person"></i></span>';
+  }
+  function meta(p) {
+    var parts = [p.employee_no, p.company || '(sin empresa)', p.meal_policy];
+    if (!p.authorized) parts.push('NO autorizada');
+    return parts.join(' · ');
+  }
+
+  function renderResults(list) {
+    results.innerHTML = '';
+    if (!list.length) {
+      results.innerHTML = '<div class="list-group-item text-muted">Sin coincidencias en la ficha de personas.</div>';
+    }
+    list.forEach(function (p) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'list-group-item list-group-item-action' + (p.blocked.length ? ' text-muted' : '');
+      var flags = '';
+      if (p.blocked.length) flags += ' <span class="badge bg-danger">ya tiene colación</span>';
+      else if (p.warnings.length) flags += ' <span class="badge bg-warning text-dark">con avisos</span>';
+      b.innerHTML = thumb(p) + '<div><div>' + esc(p.name) + flags + '</div><div class="person-meta">' + esc(meta(p)) + '</div></div>';
+      b.addEventListener('click', function () { select(p); });
+      results.appendChild(b);
+    });
+    results.style.display = '';
+  }
+
+  function hideResults() { results.style.display = 'none'; }
+
+  function select(p) {
+    current = p;
+    hidden.value = p.id;
+    input.value = p.name;
+    hideResults();
+    var html = '<div class="d-flex gap-3 align-items-start">' + thumb(p) +
+      '<div class="flex-grow-1"><div class="fw-semibold">' + esc(p.name) + '</div>' +
+      '<div class="person-meta">' + esc(meta(p)) + '</div>';
+    if (p.blocked.length) {
+      html += '<div class="alert alert-danger py-2 px-3 mt-2 mb-0"><strong>No se puede registrar.</strong><ul class="chk-list">' +
+        p.blocked.map(function (t) { return '<li>' + esc(t) + '</li>'; }).join('') + '</ul></div>';
+    } else if (p.warnings.length) {
+      html += '<div class="alert alert-warning py-2 px-3 mt-2 mb-0"><strong>Avisos:</strong> el terminal la habría rechazado.<ul class="chk-list">' +
+        p.warnings.map(function (t) { return '<li>' + esc(t) + '</li>'; }).join('') + '</ul></div>';
+    } else {
+      html += '<div class="text-success small mt-1"><i class="bi bi-check-circle"></i> Sin colación previa en este turno; autorizada.</div>';
+    }
+    html += '</div><button type="button" class="btn btn-sm btn-outline-secondary" id="changePerson">Cambiar</button></div>';
+    card.innerHTML = html;
+    card.style.display = '';
+    document.getElementById('changePerson').addEventListener('click', clear);
+    overrideBox.style.display = (!p.blocked.length && p.warnings.length) ? '' : 'none';
+    if (overrideInput && !(p.warnings.length)) overrideInput.checked = false;
+    submitBtn.disabled = !!p.blocked.length;
+  }
+
+  function clear() {
+    current = null;
+    hidden.value = '';
+    input.value = '';
+    card.style.display = 'none';
+    card.innerHTML = '';
+    overrideBox.style.display = 'none';
+    if (overrideInput) overrideInput.checked = false;
+    submitBtn.disabled = true;
+    lastQuery = '';
+    input.focus();
+  }
+
+  function lookup() {
+    var q = input.value.trim();
+    if (q.length < 2) { hideResults(); return; }
+    if (q === lastQuery) { results.style.display = ''; return; }
+    lastQuery = q;
+    fetch(url + '?q=' + encodeURIComponent(q), {credentials: 'same-origin'})
+      .then(function (r) { return r.ok ? r.json() : {results: []}; })
+      .then(function (data) { if (input.value.trim() === q) renderResults(data.results || []); })
+      .catch(function () {});
+  }
+
+  input.addEventListener('input', function () {
+    // escribir de nuevo invalida la persona elegida: hay que volver a elegirla de la lista
+    if (current && input.value.trim() !== current.name) {
+      current = null; hidden.value = ''; card.style.display = 'none'; overrideBox.style.display = 'none'; submitBtn.disabled = true;
+    }
+    clearTimeout(timer); timer = setTimeout(lookup, 180);
+  });
+  input.addEventListener('focus', function () { if (results.innerHTML && !current) results.style.display = ''; });
+  input.addEventListener('keydown', function (e) { if (e.key === 'Escape') hideResults(); });
+  document.addEventListener('click', function (e) {
+    if (!results.contains(e.target) && e.target !== input) hideResults();
+  });
+
+  // el formulario no se manda sin persona elegida ni con una bloqueada
+  document.getElementById('manualForm').addEventListener('submit', function (e) {
+    if (!current || current.blocked.length) { e.preventDefault(); input.focus(); }
+  });
+
+  var selected = {{ selected_json|safe }};
+  if (selected) select(selected);
+})();
+</script>
+{% endblock %}

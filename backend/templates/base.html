@@ -60,6 +60,9 @@
           <li class="nav-item"><a class="nav-link {% block nav_users %}{% endblock %}" href="{% url 'webapp:user_list' %}"><i class="bi bi-people"></i> Usuarios</a></li>
           <li class="nav-item"><a class="nav-link {% block nav_roles %}{% endblock %}" href="{% url 'webapp:role_list' %}"><i class="bi bi-shield-lock"></i> Roles</a></li>
           {% endif %}
+          {% if caps.audit %}
+          <li class="nav-item"><a class="nav-link {% block nav_audit %}{% endblock %}" href="{% url 'webapp:audit_list' %}"><i class="bi bi-journal-text"></i> Bitácora</a></li>
+          {% endif %}
           {% endwith %}
         </ul>
       </div>

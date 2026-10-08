@@ -236,13 +236,36 @@ class Station(models.Model):
     def __str__(self):
         return self.name
 
+    #: Minutos sin sincronizar a partir de los cuales el regreso del terminal se anota en
+    #: la bitácora (el terminal sincroniza cada pocos minutos y al instante con cada marcación).
+    SYNC_SILENCE_MINUTES = 15
+
     def touch_sync(self, ip=''):
-        self.last_sync_at = timezone.now()
+        from backend.apps.core import audit
+
+        now = timezone.now()
+        previous = self.last_sync_at
+        self.last_sync_at = now
         fields = ['last_sync_at']
         if ip and ip != self.last_ip:
             self.last_ip = ip
             fields.append('last_ip')
         self.save(update_fields=fields)
+
+        # Un terminal que vuelve después de un rato sin contacto es un hecho que vale la
+        # pena reconstruir después (corte de energía, red caída, kiosco apagado).
+        if previous is None:
+            audit.log('terminal.primera_sync', 'El terminal sincronizó por primera vez.',
+                      station=self, ip=ip)
+        elif now - previous >= timedelta(minutes=self.SYNC_SILENCE_MINUTES):
+            audit.log(
+                'terminal.sync_reanudada',
+                f'El terminal volvió a sincronizar tras {audit.duration_text(now - previous)} '
+                f'sin contacto (última sincronización: {audit.local_text(previous)}).',
+                station=self, ip=ip, level=audit.WARNING,
+                data={'last_sync_at': previous.isoformat(),
+                      'silence_seconds': int((now - previous).total_seconds())},
+            )
 
     def set_enroll_password(self, raw_password):
         self.enroll_password = make_password(raw_password)
@@ -527,6 +550,16 @@ class AccessEvent(models.Model):
         DUPLICADO = 'Duplicado', 'Duplicado en turno'
         SIN_TURNO = 'SinTurno', 'Fuera de turno'
         NO_AUTORIZADO = 'NoAutorizado', 'No autorizado'
+        # Solo para ingresos manuales del backoffice que se anularon: la fila se conserva
+        # (con quién y por qué) pero deja de contar. El terminal nunca manda este estado.
+        ANULADO = 'Anulado', 'Anulado'
+
+    class Origin(models.TextChoices):
+        TERMINAL = 'terminal', 'Terminal'
+        BACKOFFICE = 'backoffice', 'Ingreso manual (backoffice)'
+
+    #: Estados que el terminal puede informar (el resto son del backoffice).
+    TERMINAL_STATUSES = ('Ok', 'Duplicado', 'SinTurno', 'NoAutorizado')
 
     station = models.ForeignKey(Station, on_delete=models.CASCADE, related_name='events')
     # Identidad global de la marcación (ver Shift.uid): clave de ingesta estable.
@@ -551,6 +584,25 @@ class AccessEvent(models.Model):
     # Foto tomada al marcar. Solo se respalda en las marcaciones de VISITA: son pagos
     # adicionales y la foto es la constancia de quién retiró la colación.
     photo = models.BinaryField('foto', blank=True, null=True, editable=False)
+
+    # De dónde salió la marcación. 'backoffice' = la registró a mano un usuario del
+    # backoffice porque la colación se sirvió pero no se pudo marcar en el kiosco (corte
+    # de energía, terminal caído). Lleva quién la registró y por qué, y queda marcada como
+    # manual en todos los informes. No se edita ni se borra: si estuvo mal, se anula
+    # (status = Anulado) y la fila sigue ahí con el motivo de la anulación.
+    origin = models.CharField('origen', max_length=12, choices=Origin.choices,
+                              default=Origin.TERMINAL)
+    entered_by = models.ForeignKey(
+        'User', on_delete=models.SET_NULL, blank=True, null=True, related_name='manual_events',
+        verbose_name='registrada por')
+    entered_by_name = models.CharField('registrada por', max_length=200, blank=True, default='')
+    entry_reason = models.CharField('motivo del ingreso manual', max_length=300, blank=True, default='')
+    annulled_at = models.DateTimeField('anulada el', blank=True, null=True)
+    annulled_by = models.ForeignKey(
+        'User', on_delete=models.SET_NULL, blank=True, null=True, related_name='annulled_events',
+        verbose_name='anulada por')
+    annulled_by_name = models.CharField('anulada por', max_length=200, blank=True, default='')
+    annul_reason = models.CharField('motivo de la anulación', max_length=300, blank=True, default='')
 
     created_at = models.DateTimeField('recibido', auto_now_add=True)
 
@@ -583,6 +635,40 @@ class AccessEvent(models.Model):
     @property
     def has_photo(self):
         return bool(self.photo)
+
+    @property
+    def is_manual(self):
+        """Ingresada a mano desde el backoffice (no la marcó el terminal)."""
+        return self.origin == self.Origin.BACKOFFICE
+
+    @property
+    def is_annulled(self):
+        return self.status == self.Status.ANULADO
+
+    @property
+    def manual_note(self):
+        """«Registrada en el backoffice por X el 08-10-2026 10:15 · Motivo: …» ('' si no es manual)."""
+        if not self.is_manual:
+            return ''
+        when = timezone.localtime(self.created_at) if self.created_at else None
+        text = f'Registrada en el backoffice por {self.entered_by_name or "—"}'
+        if when:
+            text += f' el {when:%d-%m-%Y %H:%M}'
+        if self.entry_reason:
+            text += f' · Motivo: {self.entry_reason}'
+        return text
+
+    @property
+    def annul_note(self):
+        if not self.is_annulled:
+            return ''
+        when = timezone.localtime(self.annulled_at) if self.annulled_at else None
+        text = f'Anulada por {self.annulled_by_name or "—"}'
+        if when:
+            text += f' el {when:%d-%m-%Y %H:%M}'
+        if self.annul_reason:
+            text += f' · Motivo: {self.annul_reason}'
+        return text
 
 
 # =====================================================================
@@ -967,3 +1053,73 @@ class Visit(models.Model):
                 if v.covers(e.event_time):
                     e.visit = v
                     break
+
+
+# =====================================================================
+#  Bitácora: qué pasó, cuándo, en qué estación y quién lo hizo
+# =====================================================================
+class AuditLog(models.Model):
+    """
+    Una línea por hecho (ver `core.audit`). No se edita ni se borra desde el backoffice:
+    es el registro con el que se reconstruye un incidente (p. ej. a qué hora se cayó el
+    terminal y qué colaciones se ingresaron después a mano).
+    """
+
+    class Level(models.TextChoices):
+        INFO = 'info', 'Información'
+        WARNING = 'warning', 'Atención'
+        ERROR = 'error', 'Error'
+
+    # Instante del hecho (no de su registro: un turno que el terminal informa más tarde se
+    # anota a su hora real, y la de recepción va en `data`).
+    at = models.DateTimeField('fecha y hora', default=timezone.now, db_index=True)
+    category = models.CharField('categoría', max_length=20, db_index=True)
+    action = models.CharField('acción', max_length=60)
+    level = models.CharField('nivel', max_length=10, choices=Level.choices, default=Level.INFO)
+    summary = models.CharField('resumen', max_length=400)
+
+    station = models.ForeignKey(Station, on_delete=models.SET_NULL, blank=True, null=True,
+                                related_name='audit_entries')
+    station_name = models.CharField('estación', max_length=120, blank=True, default='')
+    # Quién lo hizo. Vacío = el terminal o el propio sistema.
+    user = models.ForeignKey('User', on_delete=models.SET_NULL, blank=True, null=True,
+                             related_name='audit_entries')
+    user_name = models.CharField('usuario', max_length=200, blank=True, default='')
+    ip = models.CharField('IP', max_length=45, blank=True, default='')
+    # Enlaces al turno o la marcación a la que se refiere (si siguen existiendo).
+    shift = models.ForeignKey(Shift, on_delete=models.SET_NULL, blank=True, null=True,
+                              related_name='audit_entries')
+    event = models.ForeignKey(AccessEvent, on_delete=models.SET_NULL, blank=True, null=True,
+                              related_name='audit_entries')
+    # Detalle del hecho (antes/después, datos de la persona, etc.).
+    data = models.JSONField('detalle', default=dict, blank=True)
+
+    class Meta:
+        db_table = 'tb_audit_log'
+        verbose_name = 'entrada de bitácora'
+        verbose_name_plural = 'bitácora'
+        ordering = ['-at', '-id']
+        indexes = [
+            models.Index(fields=['category', 'at']),
+            models.Index(fields=['station', 'at']),
+        ]
+
+    def __str__(self):
+        return f'{self.at:%d-%m %H:%M:%S} · {self.action} · {self.summary[:60]}'
+
+    @property
+    def category_label(self):
+        from backend.apps.core.audit import CATEGORY_LABELS
+        return CATEGORY_LABELS.get(self.category, self.category)
+
+    @property
+    def actor(self):
+        """Quién: el usuario, o «Terminal» / «Sistema» cuando no hay usuario."""
+        if self.user_name:
+            return self.user_name
+        return 'Terminal' if self.category in ('terminal', 'turno') else 'Sistema'
+
+    @property
+    def data_items(self):
+        """Pares (clave, valor) del detalle, para mostrarlos sin JSON crudo."""
+        return [(k, v) for k, v in (self.data or {}).items()]

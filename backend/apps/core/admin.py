@@ -4,9 +4,29 @@ from django.contrib.auth.forms import UserCreationForm, UserChangeForm
 from rest_framework_api_key.admin import APIKeyModelAdmin
 
 from backend.apps.core.models import (
-    Role, User, Station, StationAPIKey, Person, Shift, AccessEvent,
+    AuditLog, Role, User, Station, StationAPIKey, Person, Shift, AccessEvent,
     ShiftSchedule, ShiftScheduleCompany, Visit, VisitorCard,
 )
+
+
+@admin.register(AuditLog)
+class AuditLogAdmin(admin.ModelAdmin):
+    """Solo lectura: la bitácora no se edita ni se borra, ni siquiera desde /admin."""
+
+    list_display = ('at', 'category', 'action', 'level', 'summary', 'station_name', 'user_name')
+    list_filter = ('category', 'level', 'station')
+    search_fields = ('summary', 'user_name', 'action')
+    date_hierarchy = 'at'
+    readonly_fields = [f.name for f in AuditLog._meta.fields]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 class UserCreationFormEmail(UserCreationForm):

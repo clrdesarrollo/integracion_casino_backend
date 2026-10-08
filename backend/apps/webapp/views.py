@@ -5,6 +5,7 @@ from django.contrib import messages
 from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
+from django.core.paginator import Paginator
 from django.db.models import Count, Q, Sum
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -13,11 +14,12 @@ from django.utils.dateparse import parse_date
 
 from django.http import Http404, HttpResponse, JsonResponse
 
+from backend.apps.core import audit
 from backend.apps.core.models import (
-    AccessEvent, Person, PersonPhoto, Role, Shift, ShiftSchedule, Station, StationAPIKey, Visit,
-    VisitorCard,
+    AccessEvent, AuditLog, Person, PersonPhoto, Role, Shift, ShiftSchedule, Station, StationAPIKey,
+    Visit, VisitorCard,
 )
-from backend.apps.core.access import CAPABILITIES
+from backend.apps.core.access import CAPABILITIES, CAPABILITY_LABELS
 from backend.apps.realtime.broadcast import active_shifts
 from backend.apps.webapp.permissions import (
     DENIED_MESSAGE, capability_required,
@@ -248,6 +250,13 @@ def visit_list(request):
     form = VisitForm(request.POST or None, station=station)
     if request.method == 'POST' and form.is_valid():
         visit = form.save(user=request.user)
+        audit.log('visita.entregada',
+                  f'Tarjeta «{visit.card_display}» entregada a {visit.visitor_name}'
+                  + (f' (viene a ver a {visit.host_display})' if visit.host_display else '')
+                  + (f' para {visit.meal_text}' if visit.meal_text else '') + '.',
+                  request=request, station=station,
+                  data={'tarjeta': visit.card_no, 'visita': visit.visitor_name,
+                        'documento': visit.visitor_document, 'visita_id': visit.pk})
         messages.success(
             request,
             f'Tarjeta «{visit.card_display}» entregada a {visit.visitor_name}'
@@ -308,6 +317,10 @@ def visit_return(request, pk):
         if visit.is_open:
             visit.close(user=request.user)
             visit.station.notify_card_grants_changed()   # la carga sin usar deja de valer
+            audit.log('visita.devuelta',
+                      f'Tarjeta «{visit.card_display}» recibida de vuelta de {visit.visitor_name}.',
+                      request=request, station=visit.station,
+                      data={'tarjeta': visit.card_no, 'visita_id': visit.pk})
             messages.success(request, f'Tarjeta «{visit.card_display}» recibida de vuelta '
                                       f'de {visit.visitor_name}.')
         else:
@@ -322,8 +335,14 @@ def visit_delete(request, pk):
     if request.method == 'POST':
         nombre = visit.visitor_name
         station = visit.station
+        detalle = {'visita': nombre, 'documento': visit.visitor_document, 'tarjeta': visit.card_no,
+                   'entregada': visit.delivered_at.isoformat(), 'entregada_por': visit.delivered_by_name,
+                   'devuelta': visit.returned_at.isoformat() if visit.returned_at else ''}
         visit.delete()
         station.notify_card_grants_changed()
+        audit.log('visita.eliminada', f'Registro de visita de {nombre} (tarjeta {detalle["tarjeta"]}) '
+                                      'ELIMINADO.',
+                  request=request, station=station, level=audit.WARNING, data=detalle)
         messages.success(request, f'Registro de visita de {nombre} eliminado.')
     return redirect(f"{reverse('webapp:visit_list')}?estacion={visit.station_id}")
 
@@ -369,7 +388,11 @@ def user_list(request):
 def user_create(request):
     form = UserForm(request.POST or None)
     if request.method == 'POST' and form.is_valid():
-        form.save()
+        new_user = form.save()
+        audit.log('usuario.creado',
+                  f'Usuario {new_user.full_name} ({new_user.email}) creado con el rol {new_user.role.name}.',
+                  request=request, data={'correo': new_user.email, 'rol': new_user.role.name,
+                                         'activo': new_user.is_active})
         messages.success(request, 'Usuario creado.')
         return redirect('webapp:user_list')
     return render(request, 'webapp/users/form.html', {'form': form, 'is_new': True})
@@ -378,9 +401,19 @@ def user_create(request):
 @capability_required('users')
 def user_edit(request, pk):
     user = get_object_or_404(User, pk=pk)
+    before = {'correo': user.email, 'rol': user.role.name, 'activo': user.is_active}
     form = UserForm(request.POST or None, instance=user)
     if request.method == 'POST' and form.is_valid():
         form.save()
+        after = {'correo': user.email, 'rol': user.role.name, 'activo': user.is_active}
+        changes = [f'{k}: {before[k]} → {after[k]}' for k in after if before[k] != after[k]]
+        if form.cleaned_data.get('password'):
+            changes.append('contraseña cambiada')
+        audit.log('usuario.editado',
+                  f'Usuario {user.full_name} ({user.email}) editado'
+                  + (': ' + '; '.join(changes) if changes else ' (sin cambios de acceso)') + '.',
+                  request=request, level=audit.WARNING if changes else audit.INFO,
+                  data={'antes': before, 'despues': after})
         messages.success(request, 'Usuario actualizado.')
         return redirect('webapp:user_list')
     return render(request, 'webapp/users/form.html',
@@ -397,7 +430,10 @@ def user_delete(request, pk):
                                          .exclude(pk=user.pk).exists()):
             messages.error(request, 'Es el único administrador activo: no se puede eliminar.')
         else:
+            detalle = {'correo': user.email, 'nombre': user.full_name, 'rol': user.role.name}
             user.delete()
+            audit.log('usuario.eliminado', f'Usuario {detalle["nombre"]} ({detalle["correo"]}) ELIMINADO.',
+                      request=request, level=audit.WARNING, data=detalle)
             messages.success(request, 'Usuario eliminado.')
         return redirect('webapp:user_list')
     return render(request, 'webapp/confirm_delete.html',
@@ -413,11 +449,19 @@ def role_list(request):
     return render(request, 'webapp/roles/list.html', {'roles': roles, 'capabilities': CAPABILITIES})
 
 
+def _perm_labels(codes):
+    return [CAPABILITY_LABELS.get(c, c) for c in (codes or [])]
+
+
 @capability_required('users')
 def role_create(request):
     form = RoleForm(request.POST or None)
     if request.method == 'POST' and form.is_valid():
-        form.save()
+        role = form.save()
+        audit.log('usuario.rol_creado',
+                  f'Rol «{role.name}» creado con permisos: '
+                  f'{", ".join(_perm_labels(role.permissions)) or "ninguno"}.',
+                  request=request, data={'permisos': _perm_labels(role.permissions)})
         messages.success(request, 'Rol creado.')
         return redirect('webapp:role_list')
     return render(request, 'webapp/roles/form.html',
@@ -427,9 +471,21 @@ def role_create(request):
 @capability_required('users')
 def role_edit(request, pk):
     role = get_object_or_404(Role, pk=pk)
+    before = list(role.permissions or [])
     form = RoleForm(request.POST or None, instance=role)
     if request.method == 'POST' and form.is_valid():
         form.save()
+        added = _perm_labels([c for c in role.permissions if c not in before])
+        removed = _perm_labels([c for c in before if c not in role.permissions])
+        changes = []
+        if added:
+            changes.append('agrega ' + ', '.join(added))
+        if removed:
+            changes.append('quita ' + ', '.join(removed))
+        audit.log('usuario.rol_editado',
+                  f'Rol «{role.name}» editado' + (': ' + '; '.join(changes) if changes else '') + '.',
+                  request=request, level=audit.WARNING if changes else audit.INFO,
+                  data={'antes': _perm_labels(before), 'despues': _perm_labels(role.permissions)})
         messages.success(request, 'Rol actualizado.')
         return redirect('webapp:role_list')
     return render(request, 'webapp/roles/form.html',
@@ -450,7 +506,10 @@ def role_delete(request, pk):
         if blocked:
             messages.error(request, blocked)
         else:
+            name, perms = role.name, _perm_labels(role.permissions)
             role.delete()
+            audit.log('usuario.rol_eliminado', f'Rol «{name}» ELIMINADO.',
+                      request=request, level=audit.WARNING, data={'permisos': perms})
             messages.success(request, 'Rol eliminado.')
         return redirect('webapp:role_list')
     if blocked:
@@ -475,6 +534,9 @@ def station_create(request):
                        initial={'device_id': Station.next_device_id()})
     if request.method == 'POST' and form.is_valid():
         station = form.save()
+        audit.log('config.estacion_creada',
+                  f'Estación «{station.name}» creada (ID de dispositivo {station.device_id}).',
+                  request=request, station=station)
         messages.success(request, 'Estación creada. Enrola el terminal con el ID y la contraseña.')
         return redirect('webapp:station_detail', pk=station.pk)
     return render(request, 'webapp/stations/form.html', {'form': form, 'is_new': True})
@@ -483,9 +545,19 @@ def station_create(request):
 @capability_required('config')
 def station_detail(request, pk):
     station = get_object_or_404(Station, pk=pk)
+    before = {'nombre': station.name, 'ubicacion': station.location, 'activa': station.is_active,
+              'id_dispositivo': station.device_id}
     form = StationForm(request.POST or None, instance=station)
     if request.method == 'POST' and form.is_valid():
         form.save()
+        after = {'nombre': station.name, 'ubicacion': station.location, 'activa': station.is_active,
+                 'id_dispositivo': station.device_id}
+        changes = [f'{k}: {before[k]} → {after[k]}' for k in after if before[k] != after[k]]
+        if form.cleaned_data.get('enroll_password'):
+            changes.append('contraseña de enrolado cambiada')
+        audit.log('config.estacion_editada',
+                  f'Estación «{station.name}» editada' + (': ' + '; '.join(changes) if changes else '') + '.',
+                  request=request, station=station, data={'antes': before, 'despues': after})
         messages.success(request, 'Estación actualizada.')
         return redirect('webapp:station_detail', pk=station.pk)
 
@@ -506,6 +578,9 @@ def station_api_key_create(request, pk):
         api_key_obj, key = StationAPIKey.objects.create_key(name=name, station=station)
         # La clave en claro solo se muestra una vez.
         request.session['new_api_key'] = {'prefix': api_key_obj.prefix, 'key': key}
+        audit.log('config.api_key_creada',
+                  f'API key «{name}» (prefijo {api_key_obj.prefix}) generada para «{station.name}».',
+                  request=request, station=station)
         messages.success(request, 'API key generada. Cópiala ahora: no se volverá a mostrar.')
     return redirect('webapp:station_detail', pk=station.pk)
 
@@ -517,6 +592,10 @@ def station_api_key_revoke(request, pk, key_id):
         api_key = get_object_or_404(StationAPIKey, pk=key_id, station=station)
         api_key.revoked = True
         api_key.save(update_fields=['revoked'])
+        audit.log('config.api_key_revocada',
+                  f'API key «{api_key.name}» (prefijo {api_key.prefix}) de «{station.name}» REVOCADA: '
+                  'el terminal que la use deja de poder sincronizar.',
+                  request=request, station=station, level=audit.WARNING)
         messages.success(request, 'API key revocada.')
     return redirect('webapp:station_detail', pk=station.pk)
 
@@ -538,8 +617,13 @@ def schedule_list(request, pk):
     station = get_object_or_404(Station, pk=pk)
     # La prórroga de cierre se edita en esta misma página (es configuración compartida).
     overtime_form = ShiftOvertimeForm(request.POST or None, instance=station)
+    before_overtime = station.shift_overtime_minutes
     if request.method == 'POST' and overtime_form.is_valid():
         overtime_form.save()
+        audit.log('config.prorroga',
+                  f'Prórroga de cierre de turno de «{station.name}»: {before_overtime} → '
+                  f'{station.shift_overtime_minutes} minutos.',
+                  request=request, station=station)
         messages.success(
             request,
             'Prórroga actualizada. El terminal la aplicará en su próxima sincronización.',
@@ -567,6 +651,10 @@ def station_auto_shifts(request, pk):
         station.auto_shifts = request.POST.get('auto_shifts') == '1'
         station.save(update_fields=['auto_shifts'])
         station.touch_config()
+        audit.log('config.turnos_automaticos',
+                  f'Inicio y cierre automático de turnos de «{station.name}» '
+                  f'{"ACTIVADO" if station.auto_shifts else "desactivado"}.',
+                  request=request, station=station)
         if station.auto_shifts:
             messages.success(request, 'Inicio y cierre automático activado: el terminal abrirá y cerrará '
                                       'cada turno a su hora.')
@@ -587,6 +675,11 @@ def station_test_mode(request, pk):
         station.test_mode = request.POST.get('test_mode') == '1'
         station.save(update_fields=['test_mode'])
         station.touch_config()
+        audit.log('config.modo_pruebas',
+                  f'Modo de pruebas de «{station.name}» '
+                  f'{"ACTIVADO: el terminal ignora las marcaciones" if station.test_mode else "desactivado"}.',
+                  request=request, station=station,
+                  level=audit.WARNING if station.test_mode else audit.INFO)
         if station.test_mode:
             messages.warning(request, 'Modo de pruebas ACTIVADO: el terminal ignora las marcaciones '
                                       'hasta que se desactive.')
@@ -603,19 +696,37 @@ def schedule_create(request, pk):
                              initial={'start': '12:00', 'end': '14:00'})
     if request.method == 'POST' and form.is_valid():
         obj = form.save(station)
+        audit.log('config.turno_creado',
+                  f'Turno programado «{obj.name}» ({obj.time_range}, {obj.days_text}) creado en '
+                  f'«{station.name}»: {obj.companies_summary}.',
+                  request=request, station=station, data=_schedule_snapshot(obj))
         messages.success(request, f'Turno «{obj.name}» creado. El terminal lo tomará en su próxima sincronización.')
         return redirect('webapp:schedule_list', pk=station.pk)
     return render(request, 'webapp/config/schedule_form.html',
                   {'station': station, 'form': form, 'is_new': True})
 
 
+def _schedule_snapshot(s):
+    return {'nombre': s.name, 'horario': s.time_range, 'dias': s.days_text, 'habilitado': s.enabled,
+            'empresas': 'todas' if s.all_companies else ', '.join(s.company_names) or 'ninguna',
+            'visitas': s.allow_visitors, 'almuerzo': s.is_lunch, 'ingreso_manual': s.manual_entry}
+
+
 @capability_required('config')
 def schedule_edit(request, pk, sid):
     station = get_object_or_404(Station, pk=pk)
     schedule = get_object_or_404(ShiftSchedule, pk=sid, station=station)
+    before = _schedule_snapshot(schedule)
     form = ShiftScheduleForm(request.POST or None, station=station, instance=schedule)
     if request.method == 'POST' and form.is_valid():
         form.save(station)
+        schedule.refresh_from_db()
+        after = _schedule_snapshot(schedule)
+        changes = [f'{k}: {before[k]} → {after[k]}' for k in after if before[k] != after[k]]
+        audit.log('config.turno_editado',
+                  f'Turno programado «{schedule.name}» de «{station.name}» editado'
+                  + (': ' + '; '.join(changes) if changes else ' (sin cambios)') + '.',
+                  request=request, station=station, data={'antes': before, 'despues': after})
         messages.success(request, f'Turno «{schedule.name}» actualizado. El terminal lo tomará en su próxima sincronización.')
         return redirect('webapp:schedule_list', pk=station.pk)
     return render(request, 'webapp/config/schedule_form.html',
@@ -627,14 +738,71 @@ def schedule_delete(request, pk, sid):
     station = get_object_or_404(Station, pk=pk)
     schedule = get_object_or_404(ShiftSchedule, pk=sid, station=station)
     if request.method == 'POST':
-        name = schedule.name
+        name, snapshot = schedule.name, _schedule_snapshot(schedule)
         schedule.delete()
         station.touch_config()
+        audit.log('config.turno_eliminado',
+                  f'Turno programado «{name}» ({snapshot["horario"]}) de «{station.name}» ELIMINADO.',
+                  request=request, station=station, level=audit.WARNING, data=snapshot)
         messages.success(request, f'Turno «{name}» eliminado.')
         return redirect('webapp:schedule_list', pk=station.pk)
     return render(request, 'webapp/confirm_delete.html', {
         'obj': schedule, 'tipo': 'turno programado',
         'volver': 'webapp:schedule_list', 'volver_pk': station.pk,
+    })
+
+
+# =====================================================================
+#  Bitácora (solo lectura)
+# =====================================================================
+@capability_required('audit')
+def audit_list(request):
+    """
+    Todo lo que pasó en el período, en orden de tiempo, con filtros por categoría,
+    estación, nivel y texto. Por defecto, los últimos 7 días.
+    """
+    from backend.apps.core.audit import CATEGORIES
+
+    today = timezone.localdate()
+    d_from = parse_date(request.GET.get('from') or '') or today - timedelta(days=7)
+    d_to = parse_date(request.GET.get('to') or '') or today
+    if d_from > d_to:
+        d_from, d_to = d_to, d_from
+    tz = timezone.get_current_timezone()
+    dt_from = timezone.make_aware(datetime.combine(d_from, time.min), tz)
+    dt_to = timezone.make_aware(datetime.combine(d_to + timedelta(days=1), time.min), tz)
+
+    entries = AuditLog.objects.filter(at__gte=dt_from, at__lt=dt_to)
+    cat = (request.GET.get('cat') or '').strip()
+    if cat in dict(CATEGORIES):
+        entries = entries.filter(category=cat)
+    station = None
+    if (request.GET.get('station') or '').isdigit():
+        station = Station.objects.filter(pk=int(request.GET['station'])).first()
+        if station is not None:
+            entries = entries.filter(station=station)
+    level = (request.GET.get('level') or '').strip()
+    if level == 'warning':
+        entries = entries.filter(level__in=[AuditLog.Level.WARNING, AuditLog.Level.ERROR])
+    q = ' '.join((request.GET.get('q') or '').split())
+    if q:
+        entries = entries.filter(Q(summary__icontains=q) | Q(user_name__icontains=q)
+                                 | Q(action__icontains=q) | Q(ip__icontains=q))
+
+    page = Paginator(entries, 100).get_page(request.GET.get('page'))
+    params = request.GET.copy()
+    params.pop('page', None)
+    return render(request, 'webapp/audit/list.html', {
+        'page': page,
+        'd_from': d_from,
+        'd_to': d_to,
+        'cat': cat,
+        'categories': CATEGORIES,
+        'station': station,
+        'stations': Station.objects.all(),
+        'level': level,
+        'q': q,
+        'query': params.urlencode(),
     })
 
 
@@ -691,6 +859,9 @@ def person_refresh(request, pk):
     station = get_object_or_404(Station, pk=pk)
     if request.method == 'POST':
         station.request_persons_refresh()
+        audit.log('config.personas_actualizar',
+                  f'Se pidió al terminal de «{station.name}» volver a leer las personas de HikCentral.',
+                  request=request, station=station)
         messages.info(request, 'Actualización solicitada al terminal. La lista se refresca sola '
                                'cuando el terminal termine de leer HikCentral.')
     return redirect('webapp:person_list', pk=station.pk)
@@ -728,6 +899,9 @@ def visitor_card_list(request, pk):
                 enabled=form.cleaned_data['enabled'],
             )
             station.touch_config()
+            audit.log('config.tarjeta_agregada',
+                      f'Tarjeta de visita {no} («{label}») agregada al set de «{station.name}».',
+                      request=request, station=station)
             messages.success(request, f'Tarjeta {no} agregada como «{label}».')
             return redirect('webapp:visitor_card_list', pk=station.pk)
     return render(request, 'webapp/config/visitor_cards.html', {
@@ -747,6 +921,9 @@ def visitor_card_toggle(request, pk, cid):
         card.save(update_fields=['enabled'])
         station.touch_config()
         estado = 'habilitada' if card.enabled else 'deshabilitada'
+        audit.log('config.tarjeta_alternada',
+                  f'Tarjeta de visita {card.card_no} («{card.label}») {estado} en «{station.name}».',
+                  request=request, station=station)
         messages.success(request, f'Tarjeta {card.card_no} {estado}.')
     return redirect('webapp:visitor_card_list', pk=station.pk)
 
@@ -756,8 +933,11 @@ def visitor_card_delete(request, pk, cid):
     station = get_object_or_404(Station, pk=pk)
     card = get_object_or_404(VisitorCard, pk=cid, station=station)
     if request.method == 'POST':
-        no = card.card_no
+        no, label = card.card_no, card.label
         card.delete()
         station.touch_config()
+        audit.log('config.tarjeta_eliminada',
+                  f'Tarjeta de visita {no} («{label}») ELIMINADA del set de «{station.name}».',
+                  request=request, station=station, level=audit.WARNING)
         messages.success(request, f'Tarjeta {no} eliminada del set.')
     return redirect('webapp:visitor_card_list', pk=station.pk)

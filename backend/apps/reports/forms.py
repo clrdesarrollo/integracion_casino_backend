@@ -69,6 +69,45 @@ class TestMailForm(forms.Form):
                           widget=forms.EmailInput(attrs=_INPUT))
 
 
+class ManualEventForm(forms.Form):
+    """
+    Ingreso manual de UNA colación sobre un turno cerrado. La persona se elige desde la
+    búsqueda (va su id de la ficha); las validaciones de fondo las hace `reports.manual`.
+    """
+
+    person = forms.IntegerField(widget=forms.HiddenInput())
+    event_time = forms.TimeField(
+        label='Hora de la colación', input_formats=['%H:%M:%S', '%H:%M'],
+        widget=forms.TimeInput(attrs={**_INPUT, 'type': 'time', 'step': 1}, format='%H:%M:%S'),
+        help_text='Si no la sabes con exactitud, deja la hora de término del turno.')
+    reason = forms.CharField(
+        label='Motivo', min_length=10, max_length=300,
+        widget=forms.Textarea(attrs={**_INPUT, 'rows': 2,
+                                     'placeholder': 'Ej: corte de energía, el kiosco quedó apagado; '
+                                                    'anotado en la hoja de la cocina'}),
+        help_text='Queda en el informe y en la bitácora junto a tu nombre.')
+    # Solo se ofrece cuando la persona tiene avisos (el terminal la habría rechazado).
+    override = forms.BooleanField(
+        label='Registrar de todos modos', required=False,
+        widget=forms.CheckboxInput(attrs=_CHECK))
+    confirm = forms.BooleanField(
+        label='Confirmo que esta persona retiró su colación en este turno y entiendo que el '
+              'registro quedará marcado como ingreso manual a mi nombre.',
+        widget=forms.CheckboxInput(attrs=_CHECK),
+        error_messages={'required': 'Debes confirmar el registro.'})
+
+    def clean_reason(self):
+        return ' '.join(self.cleaned_data['reason'].split())
+
+
+class AnnulEventForm(forms.Form):
+    reason = forms.CharField(label='Motivo de la anulación', min_length=5, max_length=300,
+                             widget=forms.TextInput(attrs=_INPUT))
+
+    def clean_reason(self):
+        return ' '.join(self.cleaned_data['reason'].split())
+
+
 class ScheduledReportForm(forms.ModelForm):
     """Alta/edición de un envío programado."""
 

@@ -1,0 +1,112 @@
+{% extends 'base.html' %}
+{% block title %}Bitácora · Casino{% endblock %}
+{% block nav_audit %}active{% endblock %}
+
+{% block content %}
+<style>
+  .audit-row.is-warning td:first-child { box-shadow: inset 4px 0 0 var(--ds-warning); }
+  .audit-row.is-error td:first-child { box-shadow: inset 4px 0 0 var(--ds-danger); }
+  .audit-data { font-size: 12px; color: var(--ds-ink-mute); }
+  .audit-data dt { font-weight: 500; display: inline; }
+  .audit-data dd { display: inline; margin: 0 .6rem 0 .25rem; }
+  .cat-badge { font-weight: 400; }
+</style>
+
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+  <h1 class="page-title mb-0"><i class="bi bi-journal-text"></i> Bitácora
+    <span class="ds-caption">· todo lo que pasa en el sistema, en orden de tiempo</span>
+  </h1>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <form method="get" class="row g-2 align-items-end">
+      <div class="col-md-2">
+        <label class="form-label">Desde</label>
+        <input type="date" name="from" value="{{ d_from|date:'Y-m-d' }}" class="form-control">
+      </div>
+      <div class="col-md-2">
+        <label class="form-label">Hasta</label>
+        <input type="date" name="to" value="{{ d_to|date:'Y-m-d' }}" class="form-control">
+      </div>
+      <div class="col-md-2">
+        <label class="form-label">Categoría</label>
+        <select name="cat" class="form-select">
+          <option value="">Todas</option>
+          {% for code, label in categories %}
+          <option value="{{ code }}" {% if cat == code %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label">Estación</label>
+        <select name="station" class="form-select">
+          <option value="">Todas</option>
+          {% for s in stations %}
+          <option value="{{ s.pk }}" {% if station and station.pk == s.pk %}selected{% endif %}>{{ s.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label">Nivel</label>
+        <select name="level" class="form-select">
+          <option value="">Todos</option>
+          <option value="warning" {% if level == 'warning' %}selected{% endif %}>Solo atención y errores</option>
+        </select>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label">Buscar</label>
+        <input type="search" name="q" value="{{ q }}" class="form-control" placeholder="texto, persona, usuario">
+      </div>
+      <div class="col-md-12 d-flex gap-2">
+        <button type="submit" class="btn btn-primary"><i class="bi bi-funnel"></i> Filtrar</button>
+        <a href="{% url 'webapp:audit_list' %}" class="btn btn-outline-secondary">Limpiar</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-header">
+    Del {{ d_from|date:"d-m-Y" }} al {{ d_to|date:"d-m-Y" }}
+    <span class="ds-caption fw-normal">— {{ page.paginator.count }} entrada{{ page.paginator.count|pluralize }}{% if page.paginator.num_pages > 1 %}, página {{ page.number }} de {{ page.paginator.num_pages }}{% endif %}</span>
+  </div>
+  <div class="table-responsive"><table class="table table-sm table-hover mb-0 align-middle">
+    <thead><tr><th>Fecha y hora</th><th>Categoría</th><th>Qué pasó</th><th>Estación</th><th>Quién</th><th>IP</th></tr></thead>
+    <tbody>
+      {% for e in page %}
+      <tr class="audit-row is-{{ e.level }}">
+        <td class="text-nowrap fw-semibold">{{ e.at|date:"d-m-Y H:i:s" }}</td>
+        <td class="text-nowrap">
+          <span class="badge cat-badge {% if e.category == 'terminal' %}bg-dark{% elif e.category == 'turno' %}bg-primary{% elif e.category == 'colacion' %}bg-info{% elif e.category == 'config' %}bg-secondary{% elif e.category == 'usuario' %}bg-secondary{% elif e.category == 'sesion' %}bg-light text-dark border{% elif e.category == 'visita' %}bg-info{% else %}bg-secondary{% endif %}">{{ e.category_label }}</span>
+          {% if e.level == 'warning' %}<i class="bi bi-exclamation-triangle-fill text-warning" title="Atención"></i>{% elif e.level == 'error' %}<i class="bi bi-x-octagon-fill text-danger" title="Error"></i>{% endif %}
+        </td>
+        <td>
+          {{ e.summary }}
+          {% if e.shift_id and user.caps.shifts %} <a href="{% url 'reports:shift_detail' e.shift_id %}" class="ds-caption text-nowrap">ver turno</a>{% endif %}
+          {% if e.data_items %}
+          <details class="audit-data mt-1"><summary>detalle</summary>
+            <dl class="mb-0">{% for k, v in e.data_items %}<dt>{{ k }}:</dt><dd>{{ v }}</dd>{% endfor %}</dl>
+          </details>
+          {% endif %}
+        </td>
+        <td class="text-nowrap">{{ e.station_name|default:"—" }}</td>
+        <td class="text-nowrap">{{ e.actor }}</td>
+        <td class="text-nowrap"><code class="ds-micro">{{ e.ip|default:"" }}</code></td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="6" class="text-muted text-center py-3">Sin entradas en el período.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+  {% if page.paginator.num_pages > 1 %}
+  <div class="card-footer d-flex justify-content-between align-items-center">
+    <span class="ds-caption">Página {{ page.number }} de {{ page.paginator.num_pages }}</span>
+    <div>
+      {% if page.has_previous %}<a class="btn btn-sm btn-outline-secondary" href="?{{ query }}&page={{ page.previous_page_number }}">← Anterior</a>{% endif %}
+      {% if page.has_next %}<a class="btn btn-sm btn-outline-secondary" href="?{{ query }}&page={{ page.next_page_number }}">Siguiente →</a>{% endif %}
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

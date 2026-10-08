@@ -1,0 +1,37 @@
+{# Modal de anulación de un ingreso manual. Espera `annul_form` y `next_url`. #}
+<div class="modal fade" id="annulModal" tabindex="-1" aria-labelledby="annulModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <form method="post" id="annulForm" class="modal-content">
+      {% csrf_token %}
+      <input type="hidden" name="next" value="{{ next_url }}">
+      <div class="modal-header">
+        <h5 class="modal-title" id="annulModalLabel"><i class="bi bi-x-octagon text-danger"></i> Anular colación ingresada a mano</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body">
+        <p>Se anulará la colación de <strong id="annulWho">—</strong>. La fila se conserva marcada como <em>anulada</em>, con tu nombre y el motivo, y deja de contar en los informes.</p>
+        <label class="form-label" for="{{ annul_form.reason.id_for_label }}">{{ annul_form.reason.label }} <span class="text-danger">*</span></label>
+        {{ annul_form.reason }}
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="submit" class="btn btn-danger"><i class="bi bi-x-octagon"></i> Anular</button>
+      </div>
+    </form>
+  </div>
+</div>
+<script>
+(function () {
+  var modal = document.getElementById('annulModal');
+  if (!modal) return;
+  var base = "{% url 'reports:manual_event_annul' 0 %}";
+  modal.addEventListener('show.bs.modal', function (ev) {
+    var btn = ev.relatedTarget;
+    if (!btn) return;
+    document.getElementById('annulForm').action = base.replace('/0/', '/' + btn.getAttribute('data-event') + '/');
+    document.getElementById('annulWho').textContent = btn.getAttribute('data-name') || '—';
+    var reason = modal.querySelector('input[name="reason"]');
+    if (reason) { reason.value = ''; setTimeout(function () { reason.focus(); }, 200); }
+  });
+})();
+</script>

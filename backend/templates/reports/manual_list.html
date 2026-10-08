@@ -1,0 +1,96 @@
+{% extends 'base.html' %}
+{% block title %}Ingresos manuales · Informes · Casino{% endblock %}
+{% block nav_reports %}active{% endblock %}
+
+{% block content %}
+{% with tab='manual' %}{% include 'reports/_tabs.html' %}{% endwith %}
+<style>
+  .ev-thumb { width:34px; height:34px; border-radius:50%; object-fit:cover; display:block; }
+  .ev-thumb-empty { display:flex; align-items:center; justify-content:center;
+                    background:var(--ds-canvas-soft); color:var(--ds-ink-mute); }
+</style>
+
+<div class="row g-3 mb-3">
+  <div class="col-lg-7">
+    <div class="card shadow-sm h-100">
+      <div class="card-header">Registrar una colación que el kiosco no pudo marcar</div>
+      <div class="card-body">
+        <p class="mb-2">Se registra <strong>sobre el turno</strong> en que se sirvió, eligiendo a la persona de la ficha de HikCentral. Solo turnos ya cerrados.</p>
+        {% if recent_shifts %}
+        <form method="get" id="pickShift" class="row g-2 align-items-end">
+          <div class="col-md-8">
+            <label class="form-label" for="shiftPick">Turnos de los últimos 7 días</label>
+            <select id="shiftPick" class="form-select">
+              {% for s in recent_shifts %}
+              <option value="{% url 'reports:manual_event_create' s.pk %}">{{ s.started_at|date:"D d-m-Y H:i" }} · {{ s.name }} · {{ s.station.name }}{% if s.end_mode == 'interrumpido' %} · INTERRUMPIDO{% endif %}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-md-4">
+            <button type="button" class="btn btn-primary w-100" onclick="location.href=document.getElementById('shiftPick').value"><i class="bi bi-pencil-square"></i> Ingresar colación</button>
+          </div>
+        </form>
+        {% else %}
+        <p class="text-muted mb-0">No hay turnos cerrados en los últimos 7 días.</p>
+        {% endif %}
+        <div class="ds-caption mt-2">Para un turno más antiguo, búscalo en <a href="{% url 'reports:shift_list' %}">Detalle de colaciones</a> y usa el botón «Ingresar colación» del turno.</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-5">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <form method="get" class="row g-2 align-items-end">
+          <div class="col-6"><label class="form-label">Desde</label><input type="date" name="from" value="{{ d_from|date:'Y-m-d' }}" class="form-control"></div>
+          <div class="col-6"><label class="form-label">Hasta</label><input type="date" name="to" value="{{ d_to|date:'Y-m-d' }}" class="form-control"></div>
+          <div class="col-8">
+            <label class="form-label">Estación</label>
+            <select name="station" class="form-select">
+              <option value="">Todas</option>
+              {% for s in stations %}<option value="{{ s.pk }}" {% if station and station.pk == s.pk %}selected{% endif %}>{{ s.name }}</option>{% endfor %}
+            </select>
+          </div>
+          <div class="col-4"><button type="submit" class="btn btn-outline-primary w-100"><i class="bi bi-funnel"></i> Filtrar</button></div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-header">Colaciones ingresadas a mano del {{ d_from|date:"d-m-Y" }} al {{ d_to|date:"d-m-Y" }}
+    <span class="ds-caption fw-normal">— {{ n_validas }} válida{{ n_validas|pluralize }}{% if n_anuladas %}, {{ n_anuladas }} anulada{{ n_anuladas|pluralize }}{% endif %}</span>
+  </div>
+  <div class="table-responsive"><table class="table table-sm table-hover mb-0 align-middle">
+    <thead><tr><th>Colación</th><th>Turno</th><th></th><th>Persona</th><th>Nº</th><th>Empresa</th><th>Registrada por</th><th>Motivo</th><th>Estado</th><th></th></tr></thead>
+    <tbody>
+      {% for ev in events %}
+      <tr{% if ev.is_annulled %} class="text-muted"{% endif %}>
+        <td class="text-nowrap fw-semibold">{{ ev.event_time|date:"d-m-Y H:i:s" }}</td>
+        <td class="text-nowrap">{% if ev.shift %}<a href="{% url 'reports:shift_detail' ev.shift.pk %}">{{ ev.shift.name }}</a>{% else %}—{% endif %}<div class="ds-caption">{{ ev.station.name }}</div></td>
+        <td>{% if ev.person_photo_url %}<img src="{{ ev.person_photo_url }}" alt="" loading="lazy" class="ev-thumb">{% else %}<span class="ev-thumb ev-thumb-empty"><i class="bi bi-person"></i></span>{% endif %}</td>
+        <td>{{ ev.person_name|default:ev.employee_no }}</td>
+        <td><code>{{ ev.employee_no }}</code></td>
+        <td>{{ ev.company|default:"—" }}</td>
+        <td>{{ ev.entered_by_name|default:"—" }}<div class="ds-caption">{{ ev.created_at|date:"d-m-Y H:i" }}</div></td>
+        <td class="small">{{ ev.entry_reason }}</td>
+        <td>
+          {% if ev.is_annulled %}<span class="badge bg-secondary">Anulada</span><div class="ds-caption">{{ ev.annul_note }}</div>
+          {% else %}<span class="badge bg-success">Colación válida</span> <span class="badge bg-info">ingreso manual</span>{% endif %}
+        </td>
+        <td class="text-end">
+          {% if not ev.is_annulled %}
+          <button type="button" class="btn btn-sm btn-outline-danger" data-bs-toggle="modal" data-bs-target="#annulModal"
+                  data-event="{{ ev.pk }}" data-name="{{ ev.person_name|default:ev.employee_no }}">Anular</button>
+          {% endif %}
+        </td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="10" class="text-muted text-center py-3">Sin colaciones ingresadas a mano en el período.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+</div>
+
+{% include "reports/_annul_modal.html" with next_url=request.get_full_path %}
+{% endblock %}

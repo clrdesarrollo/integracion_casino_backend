@@ -54,6 +54,9 @@ urlpatterns = [
     path('estaciones/<int:pk>/tarjetas/<int:cid>/alternar/', views.visitor_card_toggle, name='visitor_card_toggle'),
     path('estaciones/<int:pk>/tarjetas/<int:cid>/eliminar/', views.visitor_card_delete, name='visitor_card_delete'),
 
+    # Bitácora: todo lo que pasa en el sistema (solo lectura)
+    path('bitacora/', views.audit_list, name='audit_list'),
+
     # Personas de la estación con su colación asignada (solo lectura: viene de HikCentral)
     path('estaciones/<int:pk>/personas/', views.person_list, name='person_list'),
     path('estaciones/<int:pk>/personas/actualizar/', views.person_refresh, name='person_refresh'),

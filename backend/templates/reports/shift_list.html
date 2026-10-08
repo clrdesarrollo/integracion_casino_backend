@@ -43,7 +43,7 @@
 
 <div class="card shadow-sm">
   <div class="card-header">Turnos del {{ d_from|date:"d-m-Y" }} al {{ d_to|date:"d-m-Y" }}
-    <span class="ds-caption fw-normal">— una fila por apertura. Junto a cada hora: si fue automática (por horario) o manual (desde la pantalla del terminal).</span>
+    <span class="ds-caption fw-normal">— una fila por apertura. Junto a cada hora: si fue automática (por horario) o manual (desde la pantalla del terminal). «A mano»: colaciones ingresadas desde el backoffice, incluidas en el total.</span>
   </div>
   <div class="table-responsive"><table class="table table-hover table-sm mb-0 align-middle">
     <thead><tr>
@@ -58,7 +58,7 @@
         <td class="text-nowrap">{% include "reports/_shift_start.html" with shift=s fmt="d-m-Y H:i:s" %}</td>
         <td class="text-nowrap">{% include "reports/_shift_end.html" with shift=s fmt="d-m-Y H:i:s" %}</td>
         <td class="text-nowrap">{% if s.is_manual_entry %}—{% else %}{{ s.duration_text }}{% endif %}</td>
-        <td class="text-end fw-semibold">{% if s.is_manual_entry %}{{ s.manual_count }}{% else %}{{ s.n_ok }}{% endif %}</td>
+        <td class="text-end fw-semibold">{% if s.is_manual_entry %}{{ s.manual_count }}{% else %}{{ s.n_ok }}{% if s.n_manual %}<div class="ds-caption fw-normal text-nowrap" title="Colaciones ingresadas a mano desde el backoffice (incluidas en el total)"><i class="bi bi-pencil-square"></i> {{ s.n_manual }} a mano</div>{% endif %}{% endif %}</td>
         <td class="text-end">{{ s.n_dup }}</td>
         <td class="text-end">{{ s.n_denied }}</td>
         <td class="text-end"><a href="{% url 'reports:shift_detail' s.pk %}" class="btn btn-sm btn-outline-secondary">Ver detalle</a></td>
