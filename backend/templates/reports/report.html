@@ -141,7 +141,7 @@
   <div class="col-12" id="visitas">
     <div class="card shadow-sm">
       <div class="card-header">Visitas
-        <span class="ds-caption fw-normal">— solo las visitas que retiraron colación en el período (tarjeta marcada en el terminal): a quién se entregó, quién la entregó y a quién venía a ver</span>
+        <span class="ds-caption fw-normal">— solo las visitas que retiraron colación en el período (tarjeta marcada en el terminal, o ingresada a mano si la visita no tenía tarjeta): a quién se entregó, quién la entregó y a quién venía a ver</span>
         {% if data.visitas_sin_registro %}<span class="badge text-bg-warning ms-1">{{ data.visitas_sin_registro }} sin registro</span>{% endif %}
       </div>
       <div class="table-responsive"><table class="table table-sm mb-0">
@@ -160,9 +160,9 @@
               {% else %}<span class="badge text-bg-light border text-muted">sin registro de visita</span>{% endif %}
             </td>
             <td>{{ r.host_display|default:"—" }}</td>
-            <td>{{ r.card_display }} <code class="ds-micro text-muted">{{ r.card_no }}</code></td>
+            <td>{% if r.sin_tarjeta %}Sin tarjeta <span class="badge bg-info" title="La visita no pasó por el terminal: la colación se ingresó a mano en el backoffice">ingreso manual</span>{% else %}{{ r.card_display }} <code class="ds-micro text-muted">{{ r.card_no }}</code>{% endif %}</td>
             <td>{{ r.delivered_by_name|default:"—" }}</td>
-            <td class="text-nowrap">{% if not r.registrada %}—{% elif r.returned_at %}{{ r.returned_at|date:"d-m H:i" }}{% else %}<span class="badge text-bg-warning">en uso</span>{% endif %}</td>
+            <td class="text-nowrap">{% if not r.registrada or r.sin_tarjeta %}—{% elif r.returned_at %}{{ r.returned_at|date:"d-m H:i" }}{% else %}<span class="badge text-bg-warning">en uso</span>{% endif %}</td>
             {% if not station %}<td>{{ r.station.name }}</td>{% endif %}
             <td class="text-end fw-semibold">{{ r.colaciones }}</td>
           </tr>
@@ -189,8 +189,8 @@
           <tr>
             <td class="text-nowrap">{{ ev.event_time|date:"d-m H:i:s" }}</td>
             <td>{% if ev.shift %}{% if user.caps.shifts %}<a href="{% url 'reports:shift_detail' ev.shift.pk %}">{{ ev.shift.name }}</a>{% else %}{{ ev.shift.name }}{% endif %}{% else %}—{% endif %}</td>
-            <td>{{ ev.person_name|default:"(desconocido)" }}</td>
-            <td><code>{{ ev.employee_no }}</code></td>
+            <td>{{ ev.person_name|default:"(desconocido)" }}{% if ev.is_visitor %} <span class="badge bg-info">visita</span>{% endif %}</td>
+            <td>{% if ev.is_visitor and not ev.card_no %}<span class="ds-caption">sin tarjeta</span>{% else %}<code>{{ ev.employee_no }}</code>{% endif %}</td>
             <td>{{ ev.company|default:"—" }}</td>
             {% if not station %}<td>{{ ev.station.name }}</td>{% endif %}
             <td>{{ ev.entered_by_name|default:"—" }}<div class="ds-caption">{{ ev.created_at|date:"d-m-Y H:i" }}</div></td>

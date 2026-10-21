@@ -105,7 +105,14 @@ class VisitRow:
         return self.visit.host_display if self.visit else ''
 
     @property
+    def sin_tarjeta(self):
+        """Visita sin tarjeta: su colación se ingresó a mano, no pasó por el terminal."""
+        return self.visit is not None and self.visit.is_cardless
+
+    @property
     def card_display(self):
+        if self.sin_tarjeta:
+            return 'Sin tarjeta'
         return self.card_label or f'Tarjeta {self.card_no}'
 
     @property
@@ -324,9 +331,10 @@ def build_report(date_from: datetime, date_to: datetime,
 def _visit_rows(visitor_ok):
     """
     Filas de la sección «Visitas»: SOLO las visitas que efectivamente retiraron colación en
-    el período (la tarjeta se marcó en el terminal), más las tarjetas usadas sin registro de
-    visita. Una visita registrada que no fue al casino no figura ni se cuenta: el informe
-    respalda un cobro, y solo se cobra lo que se sirvió.
+    el período (la tarjeta se marcó en el terminal, o se ingresó a mano la colación de una
+    visita sin tarjeta), más las tarjetas usadas sin registro de visita. Una visita
+    registrada que no fue al casino no figura ni se cuenta: el informe respalda un cobro,
+    y solo se cobra lo que se sirvió.
     """
     rows = {}
     labels = None

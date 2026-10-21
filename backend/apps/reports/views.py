@@ -17,7 +17,8 @@ from backend.apps.webapp.permissions import capability_required
 from backend.apps.reports import manual
 from backend.apps.reports.excel import build_excel, build_shift_excel
 from backend.apps.reports.forms import (
-    AnnulEventForm, MailSettingsForm, ManualEventForm, ScheduledReportForm, TestMailForm,
+    AnnulEventForm, MailSettingsForm, ManualEventForm, ManualVisitorForm, ScheduledReportForm,
+    TestMailForm,
 )
 from backend.apps.reports.mailing import MailError, retry_delivery, send_now, send_test_email
 from backend.apps.reports.models import MailSettings, ReportDelivery, ScheduledReport
@@ -268,15 +269,40 @@ def manual_event_create(request, pk):
     Formulario de ingreso manual sobre UN turno. Tras registrar vuelve al mismo
     formulario (lo normal es tener una lista de varias personas), con las ya registradas
     a la vista para no repetir.
+
+    Dos formularios en la página: la persona de la ficha (`kind=person`, el de siempre) o
+    una visita sin tarjeta (`kind=visitor`). Llega uno u otro; solo ese se valida.
     """
     shift = get_object_or_404(Shift.objects.select_related('station'), pk=pk)
     block = manual.shift_block_reason(shift)
     window_start, window_end = manual.shift_window(shift)
     default_time = timezone.localtime(shift.ended_at or window_end).replace(microsecond=0).time()
-    form = ManualEventForm(request.POST or None, initial={'event_time': default_time})
+    kind = 'visitor' if request.POST.get('kind') == 'visitor' else 'person'
+    posted = request.POST if request.method == 'POST' else None
+    form = ManualEventForm(posted if kind == 'person' else None,
+                           initial={'event_time': default_time})
+    visitor_form = ManualVisitorForm(posted if kind == 'visitor' else None, prefix='visita',
+                                     initial={'event_time': default_time})
+    visitor_warnings = manual.visitor_checks(shift)
 
     selected = None   # la persona elegida, para volver a mostrarla si el formulario falla
-    if request.method == 'POST' and block is None:
+    if request.method == 'POST' and block is None and kind == 'visitor':
+        if visitor_form.is_valid():
+            data = visitor_form.cleaned_data
+            try:
+                event = manual.register_manual_visitor_event(
+                    shift, data, data['event_time'], data['reason'], request.user,
+                    override=data['override'], request=request)
+            except manual.ManualEntryError as exc:
+                visitor_form.add_error(None, str(exc))
+            else:
+                messages.success(
+                    request,
+                    f'Colación de la visita {event.person_name} registrada a las '
+                    f'{timezone.localtime(event.event_time):%H:%M:%S} como ingreso manual (sin '
+                    'tarjeta). Puedes registrar a la siguiente persona.')
+                return redirect('reports:manual_event_create', pk=shift.pk)
+    elif request.method == 'POST' and block is None:
         valid = form.is_valid()
         person_id = form.cleaned_data.get('person')
         person = shift.station.persons.filter(pk=person_id).first() if person_id else None
@@ -313,6 +339,10 @@ def manual_event_create(request, pk):
     return render(request, 'reports/manual_form.html', {
         'shift': shift,
         'form': form,
+        'visitor_form': visitor_form,
+        'visitor_warnings': visitor_warnings,
+        'kind': kind,
+        'companies': shift.station.known_companies(),
         'block_reason': block,
         'window_start': window_start,
         'window_end': window_end,

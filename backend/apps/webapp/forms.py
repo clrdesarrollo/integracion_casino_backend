@@ -407,18 +407,8 @@ class VisitForm(forms.Form):
     def resolve_host(self):
         """Ficha de la persona visitada, si el nombre escrito coincide con una sola."""
         from backend.apps.core.models import Person
-        name = ' '.join((self.cleaned_data.get('host_name') or '').split())
-        if not name:
-            return None
-        qs = Person.objects.filter(station=self.station).exclude(user_type='visitor')
-        company = (self.cleaned_data.get('host_company') or '').strip()
-        if company:
-            qs = qs.filter(company__iexact=company)
-        exact = list(qs.filter(name__iexact=name)[:2])
-        if len(exact) == 1:
-            return exact[0]
-        partial = list(qs.filter(name__icontains=name)[:2])
-        return partial[0] if len(partial) == 1 else None
+        return Person.find_host(self.station, self.cleaned_data.get('host_name'),
+                                self.cleaned_data.get('host_company'))
 
     def save(self, user):
         from django.utils import timezone

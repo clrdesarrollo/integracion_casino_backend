@@ -112,10 +112,11 @@ def build_excel(data: ReportData, titulo: str) -> bytes:
                       r.visitor_company,
                       r.visit.host_name if r.registrada else '',
                       r.visit.host_company if r.registrada else '',
-                      r.card_display,
+                      r.card_display + (' (ingreso manual)' if r.sin_tarjeta else ''),
                       r.card_no,
                       r.delivered_by_name,
-                      (_local_str(r.returned_at) or 'en uso') if r.registrada else '',
+                      '' if r.sin_tarjeta else
+                      ((_local_str(r.returned_at) or 'en uso') if r.registrada else ''),
                       r.visit.returned_by_name if r.registrada else '',
                       r.station.name if r.station else '',
                       r.colaciones,

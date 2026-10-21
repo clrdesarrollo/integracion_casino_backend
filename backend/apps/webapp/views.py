@@ -22,7 +22,7 @@ from backend.apps.core.models import (
 from backend.apps.core.access import CAPABILITIES, CAPABILITY_LABELS
 from backend.apps.realtime.broadcast import active_shifts
 from backend.apps.webapp.permissions import (
-    DENIED_MESSAGE, capability_required,
+    DENIED_MESSAGE, any_capability_required, capability_required,
 )
 from backend.apps.webapp.forms import (
     RoleForm, ShiftOvertimeForm, ShiftScheduleForm, StationForm, UserForm, VisitForm, VisitorCardForm,
@@ -138,11 +138,14 @@ def visitor_events(request):
         visit_cards = Visit.objects.filter(
             Q(visitor_name__icontains=query) | Q(host_name__icontains=query)
             | Q(host_company__icontains=query),
-        ).values_list('card_no', flat=True)
+        ).exclude(card_no='').values_list('card_no', flat=True)
         label_cards = VisitorCard.objects.filter(label__icontains=query).values_list('card_no', flat=True)
         events = events.filter(
             Q(person_name__icontains=query) | Q(card_no__icontains=query)
-            | Q(card_no__in=visit_cards) | Q(card_no__in=label_cards),
+            | Q(card_no__in=visit_cards) | Q(card_no__in=label_cards)
+            # visita sin tarjeta (ingreso manual): ligada directamente a su registro
+            | Q(visit__visitor_name__icontains=query) | Q(visit__host_name__icontains=query)
+            | Q(visit__host_company__icontains=query),
         )
 
     events = list(events[:500])
@@ -167,7 +170,8 @@ def visitor_events(request):
 
     cobrables = [e for e in events if e.status == AccessEvent.Status.OK]
     por_tarjeta = Counter(
-        (e.card_no, e.card_label or e.person_name) for e in cobrables
+        (e.card_no, e.card_label or e.person_name) if e.card_no else ('', 'Sin tarjeta (ingreso manual)')
+        for e in cobrables
     ).most_common()
     sin_registro = sum(1 for e in cobrables if e.visit is None)
 
@@ -183,7 +187,7 @@ def visitor_events(request):
         'total_cobrables': len(cobrables),
         'total_repetidas': sum(1 for e in events if e.status == AccessEvent.Status.DUPLICADO),
         'total_rechazadas': sum(1 for e in events if e.status == AccessEvent.Status.NO_AUTORIZADO),
-        'tarjetas_usadas': len({e.card_no for e in cobrables}),
+        'tarjetas_usadas': len({e.card_no for e in cobrables if e.card_no}),
         'por_tarjeta': por_tarjeta,
         'sin_registro': sin_registro,
         'truncado': len(events) >= 500,
@@ -219,16 +223,21 @@ def _visit_station(request, stations):
 
 
 def _visit_meal_counts(visits):
-    """Colaciones cobradas (Ok) con la tarjeta mientras estuvo en manos de cada visita."""
+    """
+    Colaciones cobradas (Ok) de cada visita: con la tarjeta mientras estuvo en sus manos
+    o, en la visita sin tarjeta (ingreso manual), la ligada a su registro.
+    """
     visits = list(visits)
     if not visits:
         return {}
     events = list(AccessEvent.objects.filter(
         is_visitor=True, status=AccessEvent.Status.OK,
         station_id__in={v.station_id for v in visits},
-        card_no__in={v.card_no for v in visits},
         event_time__gte=min(v.delivered_at for v in visits),
-    ))
+    ).filter(
+        Q(card_no__in={v.card_no for v in visits if v.card_no})
+        | Q(visit_id__in={v.pk for v in visits}),
+    ).defer('photo'))
     Visit.attach_to_events(events)
     return Counter(e.visit.pk for e in events if e.visit is not None)
 
@@ -332,7 +341,10 @@ def visit_return(request, pk):
 def visit_delete(request, pk):
     """Borrar un registro equivocado. Solo el administrador: el registro respalda el cobro."""
     visit = get_object_or_404(Visit, pk=pk)
-    if request.method == 'POST':
+    if request.method == 'POST' and visit.events.filter(status=AccessEvent.Status.OK).exists():
+        messages.error(request, f'La visita de {visit.visitor_name} respalda una colación ingresada a '
+                                'mano: anúlala primero en Informes → Ingresos manuales.')
+    elif request.method == 'POST':
         nombre = visit.visitor_name
         station = visit.station
         detalle = {'visita': nombre, 'documento': visit.visitor_document, 'tarjeta': visit.card_no,
@@ -347,7 +359,7 @@ def visit_delete(request, pk):
     return redirect(f"{reverse('webapp:visit_list')}?estacion={visit.station_id}")
 
 
-@capability_required('visits')
+@any_capability_required('visits', 'manual_events')
 def visit_person_suggest(request):
     """
     Autocompletado del funcionario visitado: personas de la estación (ficha de HikCentral)

@@ -163,15 +163,20 @@
                 {% if v.visitor_document or v.visitor_company %}<div class="ds-micro text-muted">{{ v.visitor_document }}{% if v.visitor_document and v.visitor_company %} · {% endif %}{{ v.visitor_company }}</div>{% endif %}
                 {% if v.notes %}<div class="ds-micro text-muted"><i class="bi bi-chat-left-text"></i> {{ v.notes }}</div>{% endif %}</td>
               <td>{{ v.host_display|default:"—" }}</td>
-              <td><div class="ds-caption">{{ v.card_display }}</div><code class="ds-micro text-muted">{{ v.card_no }}</code></td>
+              <td><div class="ds-caption">{{ v.card_display }}</div>
+                {% if v.is_cardless %}<span class="badge bg-info" title="La visita no pasó por el terminal: su colación se ingresó a mano en Informes → Ingresos manuales">ingreso manual</span>
+                {% else %}<code class="ds-micro text-muted">{{ v.card_no }}</code>{% endif %}</td>
               <td class="ds-caption">{{ v.delivered_by_name|default:"—" }}</td>
               <td class="ds-caption text-nowrap">
-                {% if v.returned_at %}{{ v.returned_at|date:"d-m-Y H:i" }}<div class="ds-micro text-muted">{{ v.returned_by_name }}</div>
+                {% if v.is_cardless %}<span class="text-muted">—</span>
+                {% elif v.returned_at %}{{ v.returned_at|date:"d-m-Y H:i" }}<div class="ds-micro text-muted">{{ v.returned_by_name }}</div>
                 {% else %}<span class="badge text-bg-warning">en uso</span>{% endif %}
               </td>
               <td class="ds-caption">{% if v.meal_text %}{{ v.meal_text }}{% endif %}
                 <div>
-                {% if v.meal_state == 'used' %}<span class="badge bg-success" title="El terminal leyó la tarjeta y entregó la colación">Utilizada {{ v.used_at|date:"d-m H:i" }}</span>{% if v.used_shift_name %} <span class="ds-micro text-muted">{{ v.used_shift_name }}</span>{% endif %}
+                {% if v.is_cardless and v.meal_state == 'used' %}<span class="badge bg-success" title="Colación ingresada a mano en el backoffice">Servida {{ v.used_at|date:"d-m H:i" }}</span>{% if v.used_shift_name %} <span class="ds-micro text-muted">{{ v.used_shift_name }}</span>{% endif %}
+                {% elif v.is_cardless %}<span class="badge bg-secondary" title="La colación ingresada a mano se anuló">Anulada</span>
+                {% elif v.meal_state == 'used' %}<span class="badge bg-success" title="El terminal leyó la tarjeta y entregó la colación">Utilizada {{ v.used_at|date:"d-m H:i" }}</span>{% if v.used_shift_name %} <span class="ds-micro text-muted">{{ v.used_shift_name }}</span>{% endif %}
                 {% elif v.meal_state == 'pending' %}<span class="badge bg-warning" title="La tarjeta aún no se ha leído en el terminal">Sin usar</span>
                 {% elif v.meal_state == 'expired' %}<span class="badge bg-secondary" title="No se usó: se devolvió la tarjeta o pasó el día">No utilizada</span>
                 {% else %}<span class="ds-micro text-muted">registro anterior</span>{% endif %}

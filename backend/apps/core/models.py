@@ -421,6 +421,26 @@ class Person(models.Model):
             ev.person_photo_url = urls.get((ev.station_id, ev.employee_no), '')
         return events
 
+    @classmethod
+    def find_host(cls, station, name, company=''):
+        """
+        Ficha del funcionario visitado a partir del nombre escrito (y la empresa, si se
+        indicó): solo si coincide con UNA persona de la estación. Si no, None y la visita
+        queda con el nombre en texto.
+        """
+        name = ' '.join((name or '').split())
+        if not name:
+            return None
+        qs = cls.objects.filter(station=station).exclude(user_type='visitor')
+        company = (company or '').strip()
+        if company:
+            qs = qs.filter(company__iexact=company)
+        exact = list(qs.filter(name__iexact=name)[:2])
+        if len(exact) == 1:
+            return exact[0]
+        partial = list(qs.filter(name__icontains=name)[:2])
+        return partial[0] if len(partial) == 1 else None
+
 
 class PersonPhoto(models.Model):
     """
@@ -579,6 +599,12 @@ class AccessEvent(models.Model):
     status = models.CharField('estado', max_length=20, choices=Status.choices)
     # Marcación de una VISITA (tarjeta RFID del set de visitas o visita del terminal).
     is_visitor = models.BooleanField('visita', default=False)
+    # Registro de visita que respalda la marcación. El terminal no lo manda (su visita se
+    # resuelve por tarjeta e instante, ver Visit.attach_to_events): lo lleva la colación de
+    # visita SIN tarjeta ingresada a mano en el backoffice (reports.manual).
+    visit = models.ForeignKey(
+        'Visit', on_delete=models.SET_NULL, blank=True, null=True, related_name='events',
+        verbose_name='registro de visita')
     # Motivo del estado (ej. "Empresa X no autorizada en el turno Almuerzo").
     detail = models.CharField('detalle', max_length=300, blank=True, default='')
     # Foto tomada al marcar. Solo se respalda en las marcaciones de VISITA: son pagos
@@ -866,7 +892,9 @@ class Visit(models.Model):
     station = models.ForeignKey(Station, on_delete=models.CASCADE, related_name='visits')
 
     # --- tarjeta entregada ---
-    card_no = models.CharField('nº tarjeta', max_length=100)
+    # Vacía en la visita SIN tarjeta: su colación no pasó por el terminal, se ingresó a mano
+    # en el backoffice (origin='manual') y el registro nace ya cerrado y utilizado.
+    card_no = models.CharField('nº tarjeta', max_length=100, blank=True)
     card_label = models.CharField('etiqueta de la tarjeta', max_length=120, blank=True)
 
     # --- la visita ---
@@ -906,7 +934,8 @@ class Visit(models.Model):
     # Cuándo el terminal leyó la tarjeta y entregó la colación (la carga queda gastada).
     used_at = models.DateTimeField('utilizada el', blank=True, null=True)
     used_shift_name = models.CharField('turno en que se utilizó', max_length=120, blank=True, default='')
-    # 'backoffice' = registrada en el mesón; 'totem' = carga de respaldo hecha en el terminal.
+    # 'backoffice' = registrada en el mesón; 'totem' = carga de respaldo hecha en el terminal;
+    # 'manual' = visita sin tarjeta cuya colación se ingresó a mano (reports.manual).
     origin = models.CharField('origen', max_length=20, default='backoffice')
 
     objects = VisitQuerySet.as_manager()
@@ -922,14 +951,21 @@ class Visit(models.Model):
         ]
 
     def __str__(self):
-        return f'{self.visitor_name} · tarjeta {self.card_no} · {self.delivered_at:%d-%m %H:%M}'
+        return f'{self.visitor_name} · {self.card_display} · {self.delivered_at:%d-%m %H:%M}'
 
     @property
     def is_open(self):
         return self.returned_at is None
 
     @property
+    def is_cardless(self):
+        """Visita sin tarjeta: colación ingresada a mano, no pasó por el terminal."""
+        return not self.card_no
+
+    @property
     def card_display(self):
+        if self.is_cardless:
+            return 'Sin tarjeta'
         return self.card_label or f'Tarjeta {self.card_no}'
 
     @property
@@ -966,7 +1002,8 @@ class Visit(models.Model):
         la medianoche). Las ya usadas también van, para que el terminal diga «ya utilizada».
         """
         since = timezone.localdate() - timedelta(days=1)
-        rows = cls.objects.open().filter(station=station, meal_date__gte=since).order_by('delivered_at')
+        rows = (cls.objects.open().filter(station=station, meal_date__gte=since)
+                .exclude(card_no='').order_by('delivered_at'))
         return [{
             'uid': v.uid,
             'card_no': v.card_no,
@@ -1025,13 +1062,20 @@ class Visit(models.Model):
     @classmethod
     def attach_to_events(cls, events):
         """
-        Pone en cada marcación de visita el registro de visita vigente para su tarjeta
-        (`event.visit`, None si la tarjeta se usó sin registrar la entrega).
+        Pone en cada marcación de visita su registro de visita (`event.visit`, None si la
+        tarjeta se usó sin registrar la entrega): el ligado directamente si lo tiene
+        (colación sin tarjeta ingresada a mano) o, para las del terminal, el vigente para
+        su tarjeta en ese instante.
 
-        Una sola consulta: las visitas de esas tarjetas entregadas antes de la última
-        marcación y no devueltas antes de la primera.
+        Dos consultas a lo más: las visitas ligadas, y las de esas tarjetas entregadas
+        antes de la última marcación y no devueltas antes de la primera.
         """
-        events = [e for e in events if e.is_visitor and e.card_no]
+        linked = [e for e in events if e.is_visitor and e.visit_id]
+        if linked:
+            visits = cls.objects.in_bulk({e.visit_id for e in linked})
+            for e in linked:
+                e.visit = visits.get(e.visit_id)
+        events = [e for e in events if e.is_visitor and not e.visit_id and e.card_no]
         if not events:
             return
         times = [e.event_time for e in events]

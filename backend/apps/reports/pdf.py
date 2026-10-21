@@ -221,9 +221,10 @@ def build_pdf(data: ReportData, titulo: str) -> bytes:
     # ---- Visitas (registro de entrega de tarjetas) ----
     if data.visitas_detalle:
         story.append(Paragraph('Visitas', section))
-        nota = ('Visitas que retiraron colación en el período (tarjeta marcada en el terminal): a quién '
-                'se entregó la tarjeta, quién la entregó y a quién venía a ver. Una visita registrada '
-                'que no retiró colación no figura.')
+        nota = ('Visitas que retiraron colación en el período (tarjeta marcada en el terminal, o '
+                'ingresada a mano en el backoffice si la visita no tenía tarjeta): a quién se entregó '
+                'la tarjeta, quién la entregó y a quién venía a ver. Una visita registrada que no '
+                'retiró colación no figura.')
         if data.visitas_sin_registro:
             nota += (f' {data.visitas_sin_registro} colación(es) se retiraron con tarjeta '
                      'sin registro de visita.')
@@ -241,7 +242,10 @@ def build_pdf(data: ReportData, titulo: str) -> bytes:
                 if extra:
                     visita += f'<br/><font color="#6E6E73">{escape(extra)}</font>'
                 entregada = _local(r.delivered_at)
-                devuelta = _local(r.returned_at) if r.returned_at else 'en uso'
+                if r.sin_tarjeta:
+                    devuelta = '—'
+                else:
+                    devuelta = _local(r.returned_at) if r.returned_at else 'en uso'
                 entrego = escape(r.delivered_by_name or '—')
                 style = cell
             else:
@@ -249,9 +253,13 @@ def build_pdf(data: ReportData, titulo: str) -> bytes:
                 entregada = _local(r.first_at) + '*'
                 devuelta, entrego = '—', '—'
                 style = cell_muted
+            if r.sin_tarjeta:
+                tarjeta = 'Sin tarjeta<br/><font color="#6E6E73">ingreso manual</font>'
+            else:
+                tarjeta = f'{escape(r.card_display)}<br/><font color="#6E6E73">{escape(r.card_no)}</font>'
             row = [entregada, Paragraph(visita, style),
                    Paragraph(escape(r.host_display or '—'), style),
-                   Paragraph(f'{escape(r.card_display)}<br/><font color="#6E6E73">{escape(r.card_no)}</font>', style),
+                   Paragraph(tarjeta, style),
                    Paragraph(entrego, style), devuelta]
             if con_estacion:
                 row.append(Paragraph(escape(r.station.name if r.station else '—'), style))

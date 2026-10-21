@@ -193,7 +193,9 @@ atribuyen a la visita **hasta que se registre la devolución**; si se vuelve a e
 tarjeta «en uso», la visita anterior se cierra sola en ese momento. El registro vive en
 `tb_visit` y guarda la tarjeta por número (el set se reemplaza completo al sincronizar con el
 terminal) y el nombre del funcionario en texto (la ficha puede desaparecer al resincronizar).
-Solo el administrador puede borrar un registro equivocado.
+Solo el administrador puede borrar un registro equivocado. Una visita que recibió colación sin
+pasar por el terminal se registra desde el ingreso manual de Informes (ver «Visita sin tarjeta»)
+y figura aquí como «Sin tarjeta · ingreso manual».
 
 **Tarjetas** (`/visitas/tarjetas/`, solo administrador): el inventario de tarjetas físicas por
 estación. Es la lista con la que el terminal reconoce que una tarjeta es de visita (foto,
@@ -327,6 +329,24 @@ En el detalle del turno, en el informe (pantalla, PDF y Excel) y en el Excel del
 colación figura marcada como ingreso manual, con quién la registró y por qué. El informe
 trae el indicador «Ingresadas a mano», la columna «A mano» por turno y una sección con el
 detalle; en los totales por empresa y por persona cuenta como cualquier otra servida.
+
+### Visita sin tarjeta
+
+Una visita que recibió colación **sin pasar por el terminal** (vino a una reunión y el
+almuerzo se llevó a la sala, por ejemplo) no está en la ficha ni marcó una tarjeta, así que
+no se puede elegir como persona. En el mismo formulario, la pestaña **Visita sin tarjeta**
+la describe como en el registro de visitas (nombre, RUT, procedencia y a quién vino a ver,
+con el funcionario sugerido desde la ficha) más la hora y el motivo. Al registrarla:
+
+- nace un **registro de visita sin tarjeta** (en Visitas → Registro de visitas figura
+  «Sin tarjeta · ingreso manual», cerrado y con la colación «Servida»), y la marcación
+  queda ligada a él;
+- el informe la **cuenta y la lista como visita**: suma en «Visitas (tarjeta)», aparece en
+  la sección «Visitas» con «Sin tarjeta · ingreso manual», en «Colaciones ingresadas a
+  mano» y en los totales por persona; en Visitas → Colaciones figura «Se cobra», sin foto;
+- si el turno no admite visitas, se avisa y exige «Registrar de todos modos»;
+- se anula como cualquier ingreso manual: la visita queda a la vista con la colación
+  «Anulada». Mientras la colación esté vigente, el registro de visita no se puede eliminar.
 
 ---
 

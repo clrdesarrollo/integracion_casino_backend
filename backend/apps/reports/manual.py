@@ -18,6 +18,12 @@ Reglas, pensadas para que un error no ensucie la información:
   solo almuerzo en otro turno) se avisa y exige confirmación explícita; queda en la bitácora.
 - Motivo obligatorio. La marcación nace con `origin='backoffice'`, quién la registró y
   cuándo. No se edita ni se borra: se anula (status Anulado) con motivo y queda la fila.
+
+Visita sin tarjeta: una visita que recibió colación sin pasar por el terminal (le llevaron
+el almuerzo a la sala de reuniones) no está en la ficha ni tiene tarjeta que marcar. Se
+describe aquí (nombre, documento, procedencia y a quién vino a ver) y nace un registro de
+visita SIN tarjeta, cerrado y ya utilizado, que respalda la marcación: con él el informe la
+cuenta y la lista como visita, igual que a las que marcaron con tarjeta.
 """
 import re
 import unicodedata
@@ -28,7 +34,7 @@ from django.db.models import Q
 from django.utils import timezone
 
 from backend.apps.core import audit
-from backend.apps.core.models import AccessEvent, Person, Shift, ShiftSchedule, new_uid
+from backend.apps.core.models import AccessEvent, Person, Shift, ShiftSchedule, Visit, new_uid
 
 #: Texto con el que el ingreso manual figura como «método» en las marcaciones.
 MANUAL_METHOD = 'Manual (backoffice)'
@@ -124,7 +130,8 @@ def person_checks(shift, person, served, schedule=None):
     blocked, warnings = [], []
     if person.is_visitor:
         blocked.append('Es una tarjeta de visita: las colaciones de visita se registran con la '
-                       'tarjeta en el terminal, no a mano.')
+                       'tarjeta en el terminal. Si la visita no pasó por él, regístrala como '
+                       '«Visita sin tarjeta».')
     previous = served.get(person.employee_no)
     if previous is not None:
         when = timezone.localtime(previous.event_time)
@@ -285,6 +292,124 @@ def register_manual_event(shift, person, clock, reason, user, *, override=False,
     return event
 
 
+def visitor_checks(shift, schedule=None):
+    """
+    Avisos para registrar la colación de una VISITA sin tarjeta en `shift` (el terminal
+    la habría rechazado). Nada bloquea: una visita no está en la ficha ni tiene colación
+    previa que mirar; dos visitas distintas son dos personas distintas.
+    """
+    schedule = schedule or schedule_of(shift)
+    warnings = []
+    if schedule is not None and not schedule.allow_visitors:
+        warnings.append(f'El turno «{schedule.name}» no admite visitas: el terminal habría '
+                        'rechazado la tarjeta.')
+    return warnings
+
+
+def register_manual_visitor_event(shift, visitor, clock, reason, user, *, override=False,
+                                  request=None):
+    """
+    Registra la colación de una VISITA que no pasó por el terminal (sin tarjeta). `visitor`
+    trae visitor_name, visitor_document, visitor_company, host_company y host_name, como
+    en el registro de visitas. Nace un registro de visita sin tarjeta, cerrado y utilizado,
+    y la marcación ligada a él. Lanza ManualEntryError con el motivo si no procede.
+    """
+    reason = ' '.join((reason or '').split())
+    if len(reason) < 10:
+        raise ManualEntryError('Indica el motivo (al menos 10 caracteres): es lo que quedará en el '
+                               'informe y en la bitácora.')
+    name = ' '.join((visitor.get('visitor_name') or '').split())
+    if not name:
+        raise ManualEntryError('Indica el nombre de la visita.')
+    host_company = (visitor.get('host_company') or '').strip()
+    host_name = ' '.join((visitor.get('host_name') or '').split())
+    if not host_company and not host_name:
+        raise ManualEntryError('Indica a quién vino a ver: la empresa, el funcionario o ambos.')
+
+    with transaction.atomic():
+        shift = (Shift.objects.select_for_update(of=('self',))
+                 .select_related('station').get(pk=shift.pk))
+        why_not = shift_block_reason(shift)
+        if why_not:
+            raise ManualEntryError(why_not)
+        window = shift_window(shift)
+        when = resolve_time(shift, clock, window)
+        schedule = schedule_of(shift)
+        warnings = visitor_checks(shift, schedule)
+        if warnings and not override:
+            raise ManualEntryError(
+                'Hay avisos sobre este turno: revísalos y, si corresponde registrar igual, '
+                'marca «Registrar de todos modos».')
+
+        host = Person.find_host(shift.station, host_name, host_company)
+        visit = Visit.objects.create(
+            station=shift.station,
+            card_no='', card_label='',
+            visitor_name=name,
+            visitor_document=(visitor.get('visitor_document') or '').strip(),
+            visitor_company=(visitor.get('visitor_company') or '').strip(),
+            host_company=host_company or (host.company if host else ''),
+            host_person=host,
+            # con ficha, su nombre completo (se pudo escribir solo «Michel»); si no, el escrito
+            host_name=host.name if host else host_name,
+            delivered_by=user if user.pk else None,
+            delivered_by_name=user.full_name,
+            delivered_at=when,
+            # sin tarjeta no hay nada que devolver: el registro nace cerrado y ya utilizado
+            returned_by=user if user.pk else None,
+            returned_by_name=user.full_name,
+            returned_at=when,
+            meal_date=shift.service_date or timezone.localtime(when).date(),
+            meal_schedule_uid=shift.schedule_uid or '',
+            meal_shift_name=shift.name,
+            used_at=when,
+            used_shift_name=shift.name,
+            origin='manual',
+            notes='Sin tarjeta: colación ingresada a mano en el backoffice.',
+        )
+        event = AccessEvent.objects.create(
+            station=shift.station,
+            uid=new_uid(),
+            remote_id=0,
+            shift=shift,
+            shift_remote_id=shift.remote_id,
+            # como «card:<nº>» en las del terminal: una clave propia, distinta por visita
+            employee_no=f'visita:{visit.pk}',
+            person_name=name,
+            company=visit.visitor_company,
+            verify_method=MANUAL_METHOD,
+            card_no='',
+            event_time=when,
+            status=AccessEvent.Status.OK,
+            is_visitor=True,
+            visit=visit,
+            origin=AccessEvent.Origin.BACKOFFICE,
+            entered_by=user,
+            entered_by_name=user.full_name,
+            entry_reason=reason,
+        )
+        procedencia = f' ({visit.visitor_company})' if visit.visitor_company else ''
+        visita_a = f', vino a ver a {visit.host_display}' if visit.host_display else ''
+        summary = (f'Colación de VISITA sin tarjeta ingresada a mano: {name}{procedencia}{visita_a}, '
+                   f'en el turno {shift.name} del '
+                   f'{shift.service_date or timezone.localtime(shift.started_at).date():%d-%m-%Y}, '
+                   f'a las {timezone.localtime(when):%H:%M:%S}. Motivo: {reason}')
+        if warnings:
+            summary += ' · Registrada pese a los avisos: ' + ' '.join(warnings)
+        audit.log(
+            'colacion.ingreso_manual', summary,
+            request=request, user=user, shift=shift, event=event,
+            level=audit.WARNING if warnings else audit.INFO,
+            data={
+                'visita': name, 'documento': visit.visitor_document,
+                'procedencia': visit.visitor_company, 'visita_a': visit.host_display,
+                'visita_id': visit.pk, 'turno': shift.name, 'turno_id': shift.pk,
+                'hora': when.isoformat(), 'motivo': reason, 'avisos': warnings,
+            },
+        )
+    return event
+
+
 def annul_manual_event(event, reason, user, request=None):
     """Anula un ingreso manual: la fila queda, deja de contar, y se anota quién y por qué."""
     reason = ' '.join((reason or '').split())
@@ -294,7 +419,7 @@ def annul_manual_event(event, reason, user, request=None):
         # of=('self',): se bloquea solo la marcación. El turno es una relación opcional
         # (LEFT JOIN) y PostgreSQL no admite FOR UPDATE sobre el lado nulo de un outer join.
         event = (AccessEvent.objects.select_for_update(of=('self',))
-                 .select_related('station', 'shift').get(pk=event.pk))
+                 .select_related('station', 'shift', 'visit').get(pk=event.pk))
         if not event.is_manual:
             raise ManualEntryError('Solo se pueden anular las colaciones ingresadas a mano; las '
                                    'marcaciones del terminal no se tocan.')
@@ -307,10 +432,18 @@ def annul_manual_event(event, reason, user, request=None):
         event.annul_reason = reason
         event.save(update_fields=['status', 'annulled_at', 'annulled_by', 'annulled_by_name',
                                   'annul_reason'])
+        visit = event.visit
+        if visit is not None and visit.origin == 'manual':
+            # la visita sin tarjeta sigue a la vista en Visitas, pero sin colación
+            visit.used_at = None
+            visit.used_shift_name = ''
+            visit.notes = f'{visit.notes} Colación ANULADA: {reason}'.strip()[:300]
+            visit.save(update_fields=['used_at', 'used_shift_name', 'notes'])
         audit.log(
             'colacion.anulada',
             f'Colación ingresada a mano ANULADA: {event.person_name or event.employee_no} '
-            f'({event.employee_no}) en el turno {event.shift.name if event.shift else "—"} '
+            f'({"visita sin tarjeta" if event.is_visitor else event.employee_no}) '
+            f'en el turno {event.shift.name if event.shift else "—"} '
             f'a las {timezone.localtime(event.event_time):%d-%m-%Y %H:%M:%S}. '
             f'La había registrado {event.entered_by_name or "—"}. Motivo: {reason}',
             request=request, user=user, shift=event.shift, event=event, level=audit.WARNING,
@@ -324,7 +457,7 @@ def annul_manual_event(event, reason, user, request=None):
 def manual_events_of(shift):
     """Ingresos manuales del turno (válidos y anulados), en orden de hora."""
     return list(shift.events.filter(origin=AccessEvent.Origin.BACKOFFICE)
-                .defer('photo').order_by('event_time', 'pk'))
+                .select_related('visit').defer('photo').order_by('event_time', 'pk'))
 
 
 def is_old(shift):

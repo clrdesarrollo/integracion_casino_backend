@@ -94,7 +94,7 @@
         </td>
         <td>{{ ev.person_name|default:ev.employee_no }}
           {% if ev.is_visitor %}<span class="badge bg-info ms-1">visita</span>{% endif %}</td>
-        <td><code>{{ ev.employee_no }}</code></td>
+        <td>{% if ev.is_visitor and not ev.card_no %}<span class="ds-caption">sin tarjeta</span>{% else %}<code>{{ ev.employee_no }}</code>{% endif %}</td>
         <td>{{ ev.company|default:"—" }}</td>
         <td>{% if ev.is_manual %}<span class="badge bg-info" title="{{ ev.manual_note }}"><i class="bi bi-pencil-square"></i> Manual (backoffice)</span>{% else %}{{ ev.verify_method|default:"—" }}{% endif %}</td>
         <td>

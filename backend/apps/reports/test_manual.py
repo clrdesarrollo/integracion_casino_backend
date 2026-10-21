@@ -10,7 +10,7 @@ from django.test import TestCase
 from django.utils import timezone
 
 from backend.apps.core.models import (
-    AccessEvent, AuditLog, Person, Role, Shift, ShiftSchedule, ShiftScheduleCompany, Station,
+    AccessEvent, AuditLog, Person, Role, Shift, ShiftSchedule, ShiftScheduleCompany, Station, Visit,
 )
 from backend.apps.reports import manual
 from backend.apps.reports.excel import build_excel, build_shift_excel
@@ -284,6 +284,206 @@ class ManualEventTests(TestCase):
         self.assertEqual(resp.status_code, 404)
         ev.refresh_from_db()
         self.assertEqual(ev.status, AccessEvent.Status.OK)
+
+
+class ManualVisitorTests(TestCase):
+    """
+    Visita sin tarjeta: recibió colación sin pasar por el terminal (le llevaron el almuerzo
+    a la sala de reuniones). Se ingresa a mano describiendo la visita y queda en el
+    informe como visita, respaldada por un registro de visita sin tarjeta.
+    """
+
+    def setUp(self):
+        User = get_user_model()
+        self.admin = User.objects.create_user(
+            email='admin@test.cl', password='x', first_name='Jose', last_name='Admin',
+            role=Role.objects.get(code='admin'))
+        self.station = Station.objects.create(name='Casino', device_id=1000)
+        self.day = timezone.localdate() - timedelta(days=1)
+        # Almuerzo 12:00–15:00, todas las empresas, admite visitas
+        self.schedule = ShiftSchedule.objects.create(
+            station=self.station, uid='sch-alm', name='Almuerzo', start_min=720, end_min=900,
+            is_lunch=True)
+        self.shift = Shift.objects.create(
+            station=self.station, uid='alm-1', remote_id=1, name='Almuerzo',
+            started_at=_at(self.day, 12, 0, 5), ended_at=_at(self.day, 15, 0, 2),
+            service_date=self.day, schedule_uid='sch-alm')
+        self.gerente = Person.objects.create(station=self.station, employee_no='7000001',
+                                             name='Nicolás Muñoz', company='PTJ',
+                                             meal_policy=Person.MealPolicy.ALL_SHIFTS)
+        AccessEvent.objects.create(
+            station=self.station, uid='ev1', remote_id=1, shift=self.shift, employee_no='7000001',
+            person_name='Nicolás Muñoz', company='PTJ', verify_method='Rostro',
+            event_time=_at(self.day, 13, 5, 0), status=AccessEvent.Status.OK)
+        self.url = f'/reportes/turnos/{self.shift.pk}/ingreso-manual/'
+        self.client.force_login(self.admin)
+
+    def _post(self, hora='13:10:00', reason='Vino a reunión con gerencia; el almuerzo se llevó a la sala',
+              override=False, confirm=True, **fields):
+        data = {'kind': 'visitor', 'visita-visitor_name': 'Juan Pérez', 'visita-visitor_document': '12.345.678-9',
+                'visita-visitor_company': 'Proveedor SA', 'visita-host_company': 'PTJ',
+                'visita-host_name': 'Nicolás Muñoz', 'visita-event_time': hora, 'visita-reason': reason}
+        for k, v in fields.items():
+            data[f'visita-{k}'] = v
+        if override:
+            data['visita-override'] = 'on'
+        if confirm:
+            data['visita-confirm'] = 'on'
+        return self.client.post(self.url, data)
+
+    def _report(self):
+        return build_report(_at(self.day, 0), _at(self.day + timedelta(days=1), 0))
+
+    def test_la_pagina_abre_limpia_con_los_dos_formularios(self):
+        resp = self.client.get(self.url)
+        self.assertContains(resp, 'Visita sin tarjeta')
+        self.assertNotContains(resp, 'Este campo es requerido')
+        self.assertFalse(resp.context['form'].is_bound)
+        self.assertFalse(resp.context['visitor_form'].is_bound)
+
+    def test_registra_la_visita_sin_tarjeta_ligada_a_su_registro(self):
+        resp = self._post()
+        self.assertRedirects(resp, self.url)
+
+        ev = AccessEvent.objects.get(is_visitor=True)
+        visit = Visit.objects.get()
+        self.assertEqual((ev.status, ev.origin), (AccessEvent.Status.OK, AccessEvent.Origin.BACKOFFICE))
+        self.assertTrue(ev.is_manual)
+        self.assertEqual((ev.visit, ev.shift, ev.card_no), (visit, self.shift, ''))
+        self.assertEqual(ev.employee_no, f'visita:{visit.pk}')
+        self.assertEqual((ev.person_name, ev.company), ('Juan Pérez', 'Proveedor SA'))
+        self.assertEqual(timezone.localtime(ev.event_time).strftime('%H:%M:%S'), '13:10:00')
+        self.assertEqual(ev.entered_by_name, 'Jose Admin')
+
+        # el registro de visita: sin tarjeta, cerrado y ya utilizado; el visitado, de la ficha
+        self.assertEqual((visit.card_no, visit.origin), ('', 'manual'))
+        self.assertTrue(visit.is_cardless)
+        self.assertEqual(visit.card_display, 'Sin tarjeta')
+        self.assertEqual((visit.visitor_document, visit.visitor_company), ('12.345.678-9', 'Proveedor SA'))
+        self.assertEqual((visit.host_person, visit.host_name, visit.host_company), (self.gerente, 'Nicolás Muñoz', 'PTJ'))
+        self.assertEqual((visit.delivered_by, visit.delivered_at), (self.admin, ev.event_time))
+        self.assertFalse(visit.is_open)
+        self.assertEqual((visit.used_at, visit.used_shift_name, visit.meal_date), (ev.event_time, 'Almuerzo', self.day))
+        self.assertEqual(visit.meal_state, 'used')
+        self.assertEqual(Visit.grants_for(self.station), [])     # jamás viaja al terminal
+
+        entry = AuditLog.objects.get(action='colacion.ingreso_manual')
+        self.assertEqual((entry.event, entry.shift), (ev, self.shift))
+        self.assertIn('VISITA sin tarjeta', entry.summary)
+        self.assertIn('Juan Pérez', entry.summary)
+        self.assertIn('Nicolás Muñoz (PTJ)', entry.summary)
+        self.assertEqual(entry.data['visita_id'], visit.pk)
+
+        resp = self.client.get(self.url)
+        self.assertContains(resp, 'Juan Pérez')
+        self.assertContains(resp, 'sin tarjeta')
+        self.assertContains(resp, 'vino a ver a Nicolás Muñoz (PTJ)')
+
+    def test_sale_en_el_informe_y_en_visitas_como_visita(self):
+        self._post()
+        data = self._report()
+        self.assertEqual((data.servidas, data.visitas, data.visitas_sin_registro, data.backoffice), (2, 1, 0, 1))
+        self.assertEqual(data.personas_unicas, 2)
+        row = data.visitas_detalle[0]
+        self.assertTrue(row.registrada and row.sin_tarjeta)
+        self.assertEqual((row.visitor_name, row.card_display, row.colaciones), ('Juan Pérez', 'Sin tarjeta', 1))
+        self.assertEqual(row.host_display, 'Nicolás Muñoz (PTJ)')
+        self.assertIn(('Juan Pérez · Sin tarjeta', 'Proveedor SA', 1, [1]), data.por_persona)
+        self.assertTrue(build_pdf(data, 'Informe').startswith(b'%PDF'))
+        self.assertTrue(build_excel(data, 'Informe').startswith(b'PK'))
+
+        resp = self.client.get(f'/reportes/?from={self.day:%Y-%m-%d}&to={self.day:%Y-%m-%d}')
+        self.assertContains(resp, 'Juan Pérez')
+        self.assertContains(resp, 'Sin tarjeta')
+        resp = self.client.get(f'/reportes/turnos/{self.shift.pk}/')
+        self.assertEqual((resp.context['n_ok'], resp.context['n_visitas'], resp.context['n_manual']), (2, 1, 1))
+
+        # Visitas → Colaciones de visitas: se cobra, sin foto, con la visita registrada
+        resp = self.client.get(f'/visitas/colaciones/?desde={self.day:%Y-%m-%d}&hasta={self.day:%Y-%m-%d}')
+        self.assertEqual((resp.context['total_cobrables'], resp.context['sin_registro'], resp.context['tarjetas_usadas']), (1, 0, 0))
+        self.assertContains(resp, 'Juan Pérez')
+        self.assertContains(resp, 'Sin tarjeta')
+        resp = self.client.get(f'/visitas/colaciones/?desde={self.day:%Y-%m-%d}&hasta={self.day:%Y-%m-%d}&q=Muñoz')
+        self.assertEqual(len(resp.context['events']), 1)
+
+        # Visitas → Registro: en el historial, no entre las tarjetas en uso, con su colación
+        resp = self.client.get(f'/visitas/?desde={self.day:%Y-%m-%d}&hasta={self.day:%Y-%m-%d}')
+        self.assertEqual(resp.context['open_visits'], [])
+        self.assertEqual([v.meals for v in resp.context['history']], [1])
+        self.assertContains(resp, 'ingreso manual')
+
+    def test_exige_a_quien_vino_a_ver_nombre_y_motivo(self):
+        resp = self._post(host_company='', host_name='')
+        self.assertContains(resp, 'Indica a quién vino a ver')
+        resp = self._post(visitor_name='  ')
+        self.assertEqual(resp.status_code, 200)
+        resp = self._post(reason='corto')
+        self.assertEqual(resp.status_code, 200)
+        resp = self._post(confirm=False)
+        self.assertContains(resp, 'Debes confirmar')
+        resp = self._post(hora='16:30:00')
+        self.assertContains(resp, 'La hora debe estar dentro del turno')
+        self.assertFalse(AccessEvent.objects.filter(is_visitor=True).exists())
+        self.assertFalse(Visit.objects.exists())
+
+        # el funcionario visitado puede no estar en la ficha: queda el nombre escrito
+        self.assertRedirects(self._post(host_name='Alguien Externo', host_company=''), self.url)
+        visit = Visit.objects.get()
+        self.assertEqual((visit.host_person, visit.host_name, visit.host_company), (None, 'Alguien Externo', ''))
+
+    def test_turno_que_no_admite_visitas_pide_confirmacion_expresa(self):
+        self.schedule.allow_visitors = False
+        self.schedule.save()
+        resp = self._post()
+        self.assertContains(resp, 'Registrar de todos modos')
+        self.assertFalse(Visit.objects.exists())
+        self.assertRedirects(self._post(override=True), self.url)
+        entry = AuditLog.objects.get(action='colacion.ingreso_manual')
+        self.assertEqual(entry.level, 'warning')
+        self.assertIn('no admite visitas', entry.summary)
+
+    def test_turno_abierto_no_admite(self):
+        self.shift.ended_at = None
+        self.shift.save()
+        resp = self._post()
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(Visit.objects.exists())
+
+    def test_anular_deja_la_visita_sin_colacion(self):
+        self._post()
+        ev = AccessEvent.objects.get(is_visitor=True)
+        visit = ev.visit
+        # mientras respalda una colación vigente, el registro de visita no se borra
+        self.client.post(f'/visitas/{visit.pk}/eliminar/')
+        self.assertTrue(Visit.objects.filter(pk=visit.pk).exists())
+
+        resp = self.client.post(f'/reportes/ingresos-manuales/{ev.pk}/anular/',
+                                {'reason': 'La visita no almorzó', 'next': self.url})
+        self.assertRedirects(resp, self.url)
+        ev.refresh_from_db()
+        visit.refresh_from_db()
+        self.assertTrue(ev.is_annulled)
+        self.assertIsNone(visit.used_at)
+        self.assertIn('ANULADA', visit.notes)
+        self.assertIn('visita sin tarjeta', AuditLog.objects.get(action='colacion.anulada').summary)
+        data = self._report()
+        self.assertEqual((data.servidas, data.visitas, data.backoffice), (1, 0, 0))
+        resp = self.client.get(f'/visitas/?desde={self.day:%Y-%m-%d}&hasta={self.day:%Y-%m-%d}')
+        self.assertContains(resp, 'Anulada')
+
+        # ya anulada, el administrador sí puede eliminar el registro
+        self.client.post(f'/visitas/{visit.pk}/eliminar/')
+        self.assertFalse(Visit.objects.filter(pk=visit.pk).exists())
+        ev.refresh_from_db()
+        self.assertIsNone(ev.visit)
+
+    def test_sugerencias_de_funcionarios_con_el_permiso_de_ingreso_manual(self):
+        role = Role.objects.create(name='Solo ingreso manual', code='solo-manual',
+                                   permissions=['manual_events'])
+        user = get_user_model().objects.create_user(email='m@test.cl', password='x', first_name='M', last_name='M', role=role)
+        self.client.force_login(user)
+        rows = self.client.get('/visitas/funcionarios/', {'estacion': self.station.pk, 'q': 'muñoz'}).json()['results']
+        self.assertEqual([r['name'] for r in rows], ['Nicolás Muñoz'])
 
 
 class AuditPageTests(TestCase):

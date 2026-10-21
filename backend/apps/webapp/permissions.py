@@ -52,3 +52,8 @@ def _guard(check):
 def capability_required(capability):
     """Exige una capacidad del catálogo (`core.access.CAPABILITIES`)."""
     return _guard(lambda u: u.has_cap(capability))
+
+
+def any_capability_required(*capabilities):
+    """Basta con una de las capacidades (un recurso que comparten dos pantallas)."""
+    return _guard(lambda u: any(u.has_cap(c) for c in capabilities))

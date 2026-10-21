@@ -25,8 +25,9 @@
 </div>
 
 <div class="alert alert-warning">
-  <strong>Úsalo solo cuando la colación se sirvió y el kiosco no pudo registrarla</strong> (corte de energía, terminal apagado).
-  La persona se elige desde la ficha de HikCentral, se exige motivo y el registro queda marcado como
+  <strong>Úsalo solo cuando la colación se sirvió y el kiosco no la registró</strong> (corte de energía, terminal apagado,
+  una visita a la que le llevaron el almuerzo a la sala de reuniones).
+  La persona se elige desde la ficha de HikCentral, o se describe la visita si no pasó por el terminal; se exige motivo y el registro queda marcado como
   <em>ingreso manual</em> con tu nombre en el detalle del turno, en el informe (pantalla, PDF y Excel) y en la bitácora.
   No se puede editar ni borrar: si te equivocas, se anula y la fila queda con el motivo.
 </div>
@@ -65,13 +66,23 @@
 
 {% if not block_reason %}
 <div class="card shadow-sm mb-3">
-  <div class="card-header">Registrar una colación</div>
-  <div class="card-body">
+  <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+    <span>Registrar una colación</span>
+    <div class="btn-group btn-group-sm" role="group" aria-label="A quién se registra">
+      <input type="radio" class="btn-check" name="kindToggle" id="kindPerson" value="person" {% if kind != 'visitor' %}checked{% endif %}>
+      <label class="btn btn-outline-primary" for="kindPerson"><i class="bi bi-person-badge"></i> Persona de la ficha</label>
+      <input type="radio" class="btn-check" name="kindToggle" id="kindVisitor" value="visitor" {% if kind == 'visitor' %}checked{% endif %}>
+      <label class="btn btn-outline-primary" for="kindVisitor"><i class="bi bi-person-plus"></i> Visita sin tarjeta</label>
+    </div>
+  </div>
+
+  <div class="card-body" id="panePerson"{% if kind == 'visitor' %} style="display:none"{% endif %}>
     {% if form.non_field_errors %}
       <div class="alert alert-danger">{% for e in form.non_field_errors %}<div>{{ e }}</div>{% endfor %}</div>
     {% endif %}
     <form method="post" id="manualForm" autocomplete="off">
       {% csrf_token %}
+      <input type="hidden" name="kind" value="person">
       {{ form.person }}
 
       <div class="row g-3">
@@ -81,7 +92,7 @@
             <input type="search" id="personSearch" class="form-control" placeholder="Escribe el nombre o el RUT (con o sin puntos ni dígito verificador)" aria-label="Buscar persona">
             <div id="personResults" class="list-group" style="display:none"></div>
           </div>
-          <div class="form-text">Solo personas de la ficha de la estación. Las tarjetas de visita no se ingresan a mano.</div>
+          <div class="form-text">Solo personas de la ficha de la estación. Una visita que no pasó por el terminal se registra en «Visita sin tarjeta».</div>
           {% if form.person.errors %}<div class="text-danger small">{{ form.person.errors|striptags }}</div>{% endif %}
 
           <div id="personCard" class="border rounded p-3 mt-2" style="display:none"></div>
@@ -125,6 +136,92 @@
       </div>
     </form>
   </div>
+
+  <div class="card-body" id="paneVisitor"{% if kind != 'visitor' %} style="display:none"{% endif %}>
+    <p class="ds-caption">
+      Para una visita que recibió su colación <strong>sin pasar por el terminal</strong> (no tenía tarjeta o no la marcó: por ejemplo,
+      le llevaron el almuerzo a la sala de reuniones). Se describe igual que en el registro de visitas y queda en el informe
+      como visita, en la sección «Visitas» y en los totales, marcada como ingreso manual.
+    </p>
+    {% if visitor_form.non_field_errors %}
+      <div class="alert alert-danger">{% for e in visitor_form.non_field_errors %}<div>{{ e }}</div>{% endfor %}</div>
+    {% endif %}
+    <form method="post" id="visitorForm" autocomplete="off">
+      {% csrf_token %}
+      <input type="hidden" name="kind" value="visitor">
+      <div class="row g-3">
+        <div class="col-lg-5">
+          <label class="form-label" for="{{ visitor_form.visitor_name.id_for_label }}">{{ visitor_form.visitor_name.label }} <span class="text-danger">*</span></label>
+          {{ visitor_form.visitor_name }}
+          {% if visitor_form.visitor_name.errors %}<div class="text-danger small">{{ visitor_form.visitor_name.errors|striptags }}</div>{% endif %}
+        </div>
+        <div class="col-lg-3">
+          <label class="form-label" for="{{ visitor_form.visitor_document.id_for_label }}">{{ visitor_form.visitor_document.label }}</label>
+          {{ visitor_form.visitor_document }}
+        </div>
+        <div class="col-lg-4">
+          <label class="form-label" for="{{ visitor_form.visitor_company.id_for_label }}">{{ visitor_form.visitor_company.label }}</label>
+          {{ visitor_form.visitor_company }}
+        </div>
+
+        <div class="col-12 pb-0"><div class="ds-micro-cap text-muted">Vino a ver a</div></div>
+        <div class="col-lg-4 pt-1">
+          <label class="form-label" for="{{ visitor_form.host_company.id_for_label }}">{{ visitor_form.host_company.label }}</label>
+          {{ visitor_form.host_company }}
+          <datalist id="empresas-conocidas">
+            {% for c in companies %}{% if c %}<option value="{{ c }}">{% endif %}{% endfor %}
+          </datalist>
+          <div class="form-text">Empresas de la ficha de personas de la estación; puedes escribir otra.</div>
+        </div>
+        <div class="col-lg-4 pt-1">
+          <label class="form-label" for="{{ visitor_form.host_name.id_for_label }}">{{ visitor_form.host_name.label }}</label>
+          {{ visitor_form.host_name }}
+          <datalist id="funcionarios-sugeridos"></datalist>
+          <div class="form-text" id="host-hint">Se busca en las personas sincronizadas desde HikCentral. Indica la empresa, el funcionario o ambos.</div>
+        </div>
+        <div class="col-lg-4 pt-1">
+          <label class="form-label" for="{{ visitor_form.event_time.id_for_label }}">{{ visitor_form.event_time.label }} <span class="text-danger">*</span></label>
+          {{ visitor_form.event_time }}
+          <div class="form-text">{{ visitor_form.event_time.help_text }} Entre {{ window_start|date:"H:i:s" }} y {{ window_end|date:"H:i:s" }}.</div>
+          {% if visitor_form.event_time.errors %}<div class="text-danger small">{{ visitor_form.event_time.errors|striptags }}</div>{% endif %}
+        </div>
+
+        <div class="col-12">
+          <label class="form-label" for="{{ visitor_form.reason.id_for_label }}">{{ visitor_form.reason.label }} <span class="text-danger">*</span></label>
+          {{ visitor_form.reason }}
+          <div class="form-text">{{ visitor_form.reason.help_text }}</div>
+          {% if visitor_form.reason.errors %}<div class="text-danger small">{{ visitor_form.reason.errors|striptags }}</div>{% endif %}
+        </div>
+
+        {% if visitor_warnings %}
+        <div class="col-12">
+          <div class="alert alert-warning py-2 px-3 mb-2"><strong>Avisos:</strong> el terminal la habría rechazada.
+            <ul class="chk-list">{% for w in visitor_warnings %}<li>{{ w }}</li>{% endfor %}</ul>
+          </div>
+          <div class="form-check border border-warning rounded p-2 ps-4 bg-warning-subtle">
+            {{ visitor_form.override }}
+            <label class="form-check-label" for="{{ visitor_form.override.id_for_label }}">
+              <strong>{{ visitor_form.override.label }}.</strong> Si igual se sirvió la colación, confírmalo aquí. Quedará anotado en la bitácora.
+            </label>
+          </div>
+        </div>
+        {% endif %}
+
+        <div class="col-12">
+          <div class="form-check">
+            {{ visitor_form.confirm }}
+            <label class="form-check-label" for="{{ visitor_form.confirm.id_for_label }}">{{ visitor_form.confirm.label }}</label>
+          </div>
+          {% if visitor_form.confirm.errors %}<div class="text-danger small">{{ visitor_form.confirm.errors|striptags }}</div>{% endif %}
+        </div>
+
+        <div class="col-12">
+          <button type="submit" class="btn btn-primary"><i class="bi bi-check2-circle"></i> Registrar colación de visita</button>
+          <span class="ds-caption ms-2">Quedará también en Visitas → Registro de visitas, como visita sin tarjeta.</span>
+        </div>
+      </div>
+    </form>
+  </div>
 </div>
 {% endif %}
 
@@ -137,8 +234,11 @@
       <tr{% if ev.is_annulled %} class="text-muted"{% endif %}>
         <td class="text-nowrap fw-semibold">{{ ev.event_time|date:"H:i:s" }}</td>
         <td>{% if ev.person_photo_url %}<img src="{{ ev.person_photo_url }}" alt="" loading="lazy" class="ev-thumb">{% else %}<span class="ev-thumb ev-thumb-empty"><i class="bi bi-person"></i></span>{% endif %}</td>
-        <td>{{ ev.person_name|default:ev.employee_no }}</td>
-        <td><code>{{ ev.employee_no }}</code></td>
+        <td>{{ ev.person_name|default:ev.employee_no }}
+          {% if ev.is_visitor %}<span class="badge bg-info ms-1">visita</span>
+            {% if ev.visit and ev.visit.host_display %}<div class="ds-caption">vino a ver a {{ ev.visit.host_display }}</div>{% endif %}
+          {% endif %}</td>
+        <td>{% if ev.is_visitor and not ev.card_no %}<span class="ds-caption">sin tarjeta</span>{% else %}<code>{{ ev.employee_no }}</code>{% endif %}</td>
         <td>{{ ev.company|default:"—" }}</td>
         <td>{{ ev.entered_by_name|default:"—" }}<div class="ds-caption">{{ ev.created_at|date:"d-m-Y H:i" }}</div></td>
         <td class="small">{{ ev.entry_reason }}</td>
@@ -163,6 +263,70 @@
 {% include "reports/_annul_modal.html" with next_url=request.path %}
 
 <script>
+(function () {
+  // Persona de la ficha / Visita sin tarjeta: un formulario a la vista a la vez
+  var panePerson = document.getElementById('panePerson');
+  var paneVisitor = document.getElementById('paneVisitor');
+  document.querySelectorAll('input[name="kindToggle"]').forEach(function (r) {
+    r.addEventListener('change', function () {
+      var visitor = document.getElementById('kindVisitor').checked;
+      panePerson.style.display = visitor ? 'none' : '';
+      paneVisitor.style.display = visitor ? '' : 'none';
+      var first = visitor ? document.getElementById('{{ visitor_form.visitor_name.id_for_label }}')
+                          : document.getElementById('personSearch');
+      if (first) first.focus();
+    });
+  });
+})();
+
+(function () {
+  // Autocompletado del funcionario visitado (visita sin tarjeta), como en el registro de visitas
+  var host = document.getElementById('{{ visitor_form.host_name.id_for_label }}');
+  var company = document.getElementById('{{ visitor_form.host_company.id_for_label }}');
+  var list = document.getElementById('funcionarios-sugeridos');
+  var hint = document.getElementById('host-hint');
+  if (!host || !company || !list) return;
+  var url = "{% url 'webapp:visit_person_suggest' %}";
+  var station = "{{ shift.station.pk }}";
+  var timer = null, lastKey = '';
+
+  function fill(rows) {
+    list.innerHTML = '';
+    rows.forEach(function (r) {
+      var o = document.createElement('option');
+      o.value = r.name;
+      o.label = r.company ? r.company : '';
+      list.appendChild(o);
+    });
+    if (hint) {
+      hint.textContent = rows.length
+        ? rows.length + (rows.length === 1 ? ' persona encontrada.' : ' personas encontradas.')
+        : 'Sin coincidencias en la ficha de personas: puedes dejar el nombre escrito igual.';
+    }
+  }
+
+  function lookup() {
+    var q = host.value.trim();
+    var key = company.value.trim() + '|' + q;
+    if (q.length < 2 || key === lastKey) return;
+    lastKey = key;
+    var params = new URLSearchParams({estacion: station, empresa: company.value.trim(), q: q});
+    fetch(url + '?' + params.toString(), {credentials: 'same-origin'})
+      .then(function (r) { return r.ok ? r.json() : {results: []}; })
+      .then(function (data) {
+        fill(data.results || []);
+        var match = (data.results || []).filter(function (r) { return r.name === host.value.trim(); });
+        if (match.length === 1 && !company.value.trim() && match[0].company) company.value = match[0].company;
+      })
+      .catch(function () {});
+  }
+
+  function schedule() { clearTimeout(timer); timer = setTimeout(lookup, 180); }
+  host.addEventListener('input', schedule);
+  host.addEventListener('change', function () { lastKey = ''; lookup(); });
+  company.addEventListener('change', function () { lastKey = ''; if (host.value.trim().length >= 2) lookup(); });
+})();
+
 (function () {
   var input = document.getElementById('personSearch');
   var results = document.getElementById('personResults');

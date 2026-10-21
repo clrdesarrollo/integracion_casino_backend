@@ -100,6 +100,66 @@ class ManualEventForm(forms.Form):
         return ' '.join(self.cleaned_data['reason'].split())
 
 
+class ManualVisitorForm(forms.Form):
+    """
+    Ingreso manual de la colación de UNA visita que no pasó por el terminal (sin tarjeta):
+    la visita se describe como en el registro de visitas. Va con prefijo porque comparte
+    página con `ManualEventForm`. Las validaciones de fondo las hace `reports.manual`.
+    """
+
+    visitor_name = forms.CharField(
+        label='Nombre de la visita', max_length=200,
+        widget=forms.TextInput(attrs={**_INPUT, 'placeholder': 'Ej: Juan Pérez', 'autocomplete': 'off'}))
+    visitor_document = forms.CharField(
+        label='RUT / documento', max_length=40, required=False,
+        widget=forms.TextInput(attrs={**_INPUT, 'placeholder': 'Opcional'}))
+    visitor_company = forms.CharField(
+        label='Empresa de procedencia', max_length=200, required=False,
+        widget=forms.TextInput(attrs={**_INPUT, 'placeholder': 'Opcional: de dónde viene'}))
+    host_company = forms.CharField(
+        label='Empresa que visitó', max_length=200, required=False,
+        widget=forms.TextInput(attrs={**_INPUT, 'list': 'empresas-conocidas', 'autocomplete': 'off',
+                                      'placeholder': 'Ej: PTJ'}))
+    host_name = forms.CharField(
+        label='Funcionario a quien vino a ver', max_length=200, required=False,
+        widget=forms.TextInput(attrs={**_INPUT, 'list': 'funcionarios-sugeridos', 'autocomplete': 'off',
+                                      'placeholder': 'Escribe el nombre para buscarlo'}))
+    event_time = forms.TimeField(
+        label='Hora de la colación', input_formats=['%H:%M:%S', '%H:%M'],
+        widget=forms.TimeInput(attrs={**_INPUT, 'type': 'time', 'step': 1}, format='%H:%M:%S'),
+        help_text='Si no la sabes con exactitud, deja la hora de término del turno.')
+    reason = forms.CharField(
+        label='Motivo', min_length=10, max_length=300,
+        widget=forms.Textarea(attrs={**_INPUT, 'rows': 2,
+                                     'placeholder': 'Ej: vino a reunión con gerencia y el almuerzo se '
+                                                    'llevó a la sala de reuniones'}),
+        help_text='Queda en el informe y en la bitácora junto a tu nombre.')
+    # Solo se ofrece cuando el turno tiene avisos (no admite visitas).
+    override = forms.BooleanField(
+        label='Registrar de todos modos', required=False,
+        widget=forms.CheckboxInput(attrs=_CHECK))
+    confirm = forms.BooleanField(
+        label='Confirmo que esta visita recibió su colación en este turno y entiendo que el '
+              'registro quedará marcado como ingreso manual a mi nombre.',
+        widget=forms.CheckboxInput(attrs=_CHECK),
+        error_messages={'required': 'Debes confirmar el registro.'})
+
+    def clean_visitor_name(self):
+        name = ' '.join(self.cleaned_data['visitor_name'].split())
+        if not name:
+            raise ValidationError('Ingresa el nombre de la visita.')
+        return name
+
+    def clean_reason(self):
+        return ' '.join(self.cleaned_data['reason'].split())
+
+    def clean(self):
+        data = super().clean()
+        if not (data.get('host_company') or '').strip() and not (data.get('host_name') or '').strip():
+            raise ValidationError('Indica a quién vino a ver: la empresa, el funcionario o ambos.')
+        return data
+
+
 class AnnulEventForm(forms.Form):
     reason = forms.CharField(label='Motivo de la anulación', min_length=5, max_length=300,
                              widget=forms.TextInput(attrs=_INPUT))
