@@ -12,13 +12,16 @@ from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_POST
 
 from backend.apps.core import audit
-from backend.apps.core.models import AccessEvent, Person, Shift, Station
+from backend.apps.core.models import (
+    AccessEvent, Holiday, Person, Shift, ShiftSchedule, StandingMeal, StandingMealException,
+    StandingMealRun, Station,
+)
 from backend.apps.webapp.permissions import capability_required
-from backend.apps.reports import manual
+from backend.apps.reports import holidays_cl, manual
 from backend.apps.reports.excel import build_excel, build_shift_excel
 from backend.apps.reports.forms import (
-    AnnulEventForm, MailSettingsForm, ManualEventForm, ManualVisitorForm, ScheduledReportForm,
-    TestMailForm,
+    AnnulEventForm, HolidayForm, MailSettingsForm, ManualEventForm, ManualVisitorForm,
+    ScheduledReportForm, StandingExceptionForm, StandingMealForm, TestMailForm,
 )
 from backend.apps.reports.mailing import MailError, retry_delivery, send_now, send_test_email
 from backend.apps.reports.models import MailSettings, ReportDelivery, ScheduledReport
@@ -132,9 +135,11 @@ def shift_list(request):
               .annotate(n_ok=_event_count(AccessEvent.Status.OK),
                         n_dup=_event_count(AccessEvent.Status.DUPLICADO),
                         n_denied=_event_count(AccessEvent.Status.NO_AUTORIZADO),
-                        # de las válidas, las ingresadas a mano desde el backoffice
+                        # de las válidas, las ingresadas a mano desde el backoffice y las programadas
                         n_manual=Count('events', filter=Q(events__status=AccessEvent.Status.OK,
-                                                          events__origin=AccessEvent.Origin.BACKOFFICE)))
+                                                          events__origin=AccessEvent.Origin.BACKOFFICE)),
+                        n_scheduled=Count('events', filter=Q(events__status=AccessEvent.Status.OK,
+                                                             events__origin=AccessEvent.Origin.SCHEDULED)))
               .order_by('-started_at'))
 
     station = None
@@ -190,6 +195,7 @@ def shift_detail(request, pk):
         'n_denied': sum(1 for e in events if e.status == AccessEvent.Status.NO_AUTORIZADO),
         'n_visitas': sum(1 for e in ok if e.is_visitor),
         'n_manual': sum(1 for e in ok if e.is_manual),
+        'n_scheduled': sum(1 for e in ok if e.is_scheduled),
         'n_anuladas': sum(1 for e in events if e.is_annulled),
         # el botón de ingreso manual solo si el usuario puede y el turno lo admite
         'can_manual': request.user.has_cap('manual_events') and manual.shift_block_reason(shift) is None,
@@ -221,8 +227,8 @@ def _safe_next(request, fallback):
 @capability_required('manual_events')
 def manual_event_list(request):
     """
-    Todas las colaciones ingresadas a mano (válidas y anuladas) en el período, y el
-    acceso para registrar una nueva sobre un turno reciente.
+    Todas las colaciones nacidas en el backoffice (a mano y programadas; válidas y
+    anuladas) en el período, y el acceso para registrar una nueva sobre un turno reciente.
     """
     today = timezone.localdate()
     d_from = _parse_date(request.GET.get('from'), today - timedelta(days=30))
@@ -232,7 +238,7 @@ def manual_event_list(request):
     dt_from, dt_to = local_range(d_from, d_to)
 
     events = (AccessEvent.objects
-              .filter(origin=AccessEvent.Origin.BACKOFFICE,
+              .filter(origin__in=AccessEvent.BACKOFFICE_ORIGINS,
                       event_time__gte=dt_from, event_time__lt=dt_to)
               .select_related('station', 'shift').defer('photo')
               .order_by('-event_time', '-pk'))
@@ -364,10 +370,10 @@ def manual_event_persons(request, pk):
 @capability_required('manual_events')
 @require_POST
 def manual_event_annul(request, pk):
-    """Anula un ingreso manual (la fila queda, con quién y por qué)."""
+    """Anula una colación ingresada a mano o programada (la fila queda, con quién y por qué)."""
     event = get_object_or_404(
         AccessEvent.objects.defer('photo').select_related('shift', 'station'),
-        pk=pk, origin=AccessEvent.Origin.BACKOFFICE)
+        pk=pk, origin__in=AccessEvent.BACKOFFICE_ORIGINS)
     fallback = (reverse('reports:manual_event_create', args=[event.shift_id]) if event.shift_id
                 else reverse('reports:manual_event_list'))
     form = AnnulEventForm(request.POST)
@@ -551,3 +557,266 @@ def mail_settings_test(request):
         messages.success(request, f'Correo de prueba enviado a {to}. Revisa la bandeja de '
                                   'entrada (y la carpeta de spam).')
     return redirect('reports:mail_settings')
+
+
+# =====================================================================
+#  Colaciones programadas (ver reports.standing) y feriados
+# =====================================================================
+def _standing_station(request, stations):
+    wanted = request.GET.get('estacion') or request.POST.get('station') or ''
+    if wanted.isdigit():
+        for s in stations:
+            if s.pk == int(wanted):
+                return s
+    return stations[0] if stations else None
+
+
+def _person_json(p):
+    return {
+        'id': p.pk, 'employee_no': p.employee_no, 'name': p.name or f'Nº {p.employee_no}',
+        'company': p.company or '', 'meal_policy': p.meal_policy_text, 'authorized': p.authorized,
+        'photo_url': p.photo_url,
+    }
+
+
+def _meal_summary(meal):
+    return (f'{meal.person_name} ({meal.employee_no}{", " + meal.company if meal.company else ""}) en '
+            f'{meal.schedule_name}, {meal.days_text}, {meal.validity_text}')
+
+
+@capability_required('standing_meals')
+def standing_meal_list(request):
+    """Las reglas, con su ficha y turno actuales, y lo que pasó los últimos 14 días."""
+    meals = list(StandingMeal.objects.select_related('station').prefetch_related('exceptions')
+                 .order_by('-active', 'person_name', 'id'))
+    persons = {
+        (p.station_id, p.employee_no): p
+        for p in Person.objects.filter(station_id__in={m.station_id for m in meals},
+                                       employee_no__in={m.employee_no for m in meals})
+    }
+    schedules = {
+        (s.station_id, s.uid): s
+        for s in ShiftSchedule.objects.filter(uid__in={m.schedule_uid for m in meals})
+    }
+    last_runs = {}
+    for run in (StandingMealRun.objects.filter(meal__in=meals)
+                .select_related('shift').order_by('meal_id', '-service_date', '-id')):
+        last_runs.setdefault(run.meal_id, run)
+    for m in meals:
+        m.current_person = persons.get((m.station_id, m.employee_no))
+        m.current_schedule = schedules.get((m.station_id, m.schedule_uid))
+        m.last_run = last_runs.get(m.pk)
+    since = timezone.localdate() - timedelta(days=14)
+    runs = list(StandingMealRun.objects.filter(service_date__gte=since)
+                .select_related('meal', 'meal__station', 'shift', 'event')
+                .order_by('-service_date', 'meal__person_name', '-id')[:200])
+    return render(request, 'reports/standing/list.html', {
+        'meals': meals,
+        'runs': runs,
+        'since': since,
+        'stations': Station.objects.all(),
+        'scheduler_alive': manual_scheduler_alive(),
+    })
+
+
+def manual_scheduler_alive():
+    """El servicio programador dio señal de vida hace poco (es el que aplica las reglas)."""
+    cfg = MailSettings.load()
+    seen = getattr(cfg, 'scheduler_seen_at', None)
+    return seen is not None and (timezone.now() - seen) < timedelta(minutes=5)
+
+
+@capability_required('standing_meals')
+def standing_meal_persons(request):
+    """Búsqueda de personas de la ficha para el formulario (JSON)."""
+    station = Station.objects.filter(pk=request.GET.get('estacion') or 0).first()
+    if station is None:
+        return JsonResponse({'results': []})
+    persons = manual.match_persons(station, request.GET.get('q', ''))
+    return JsonResponse({'results': [_person_json(p) for p in persons]})
+
+
+@capability_required('standing_meals')
+def standing_meal_create(request):
+    stations = list(Station.objects.all())
+    station = _standing_station(request, stations)
+    if station is None:
+        messages.warning(request, 'Aún no hay estaciones: crea una y enrola el terminal antes.')
+        return redirect('reports:standing_meal_list')
+    form = StandingMealForm(request.POST or None, station=station)
+    if request.method == 'POST' and form.is_valid():
+        meal = form.save(user=request.user)
+        audit.log('config.colacion_programada',
+                  f'Colación programada creada: {_meal_summary(meal)}. Motivo: {meal.note}',
+                  request=request, station=station,
+                  data={'regla_id': meal.pk, 'numero': meal.employee_no, 'turno': meal.schedule_name})
+        messages.success(request, f'Colación programada de {meal.person_name} creada. Se aplicará '
+                                  'desde el próximo turno que corresponda.')
+        return redirect('reports:standing_meal_edit', pk=meal.pk)
+    selected = form.person if request.method == 'POST' and form.person is not None else None
+    return render(request, 'reports/standing/form.html', {
+        'form': form,
+        'station': station,
+        'stations': stations,
+        'is_new': True,
+        'selected_json': json.dumps(_person_json(selected)) if selected else 'null',
+    })
+
+
+@capability_required('standing_meals')
+def standing_meal_edit(request, pk):
+    meal = get_object_or_404(StandingMeal.objects.select_related('station'), pk=pk)
+    form = StandingMealForm(request.POST or None, station=meal.station, instance=meal)
+    if request.method == 'POST' and form.is_valid():
+        before = _meal_summary(meal)
+        meal = form.save(user=request.user)
+        audit.log('config.colacion_programada',
+                  f'Colación programada editada: {_meal_summary(meal)} (antes: {before}). '
+                  f'Motivo: {meal.note}',
+                  request=request, station=meal.station,
+                  data={'regla_id': meal.pk, 'numero': meal.employee_no, 'turno': meal.schedule_name})
+        messages.success(request, 'Colación programada guardada.')
+        return redirect('reports:standing_meal_edit', pk=meal.pk)
+    selected = form.person if (request.method == 'POST' and form.person is not None) else meal.person
+    selected_json = (json.dumps(_person_json(selected)) if selected is not None else json.dumps({
+        'id': 0, 'employee_no': meal.employee_no, 'name': meal.person_name, 'company': meal.company,
+        'meal_policy': '', 'authorized': True, 'photo_url': '', 'missing': True,
+    }))
+    return render(request, 'reports/standing/form.html', {
+        'form': form,
+        'meal': meal,
+        'station': meal.station,
+        'stations': [meal.station],
+        'is_new': False,
+        'selected_json': selected_json,
+        'exc_form': StandingExceptionForm(),
+        'exceptions': meal.exceptions.all(),
+        'runs': meal.runs.select_related('shift', 'event').order_by('-service_date', '-id')[:60],
+        'n_registered': meal.runs.filter(status=StandingMealRun.Status.REGISTERED).count(),
+    })
+
+
+@capability_required('standing_meals')
+@require_POST
+def standing_meal_toggle(request, pk):
+    meal = get_object_or_404(StandingMeal, pk=pk)
+    meal.active = not meal.active
+    meal.save(update_fields=['active', 'updated_at'])
+    estado = 'activada' if meal.active else 'puesta en pausa'
+    audit.log('config.colacion_programada', f'Colación programada {estado}: {_meal_summary(meal)}.',
+              request=request, station=meal.station, data={'regla_id': meal.pk, 'activa': meal.active})
+    messages.success(request, f'Colación programada de {meal.person_name} {estado}.')
+    return redirect(_safe_next(request, reverse('reports:standing_meal_list')))
+
+
+@capability_required('standing_meals')
+@require_POST
+def standing_meal_delete(request, pk):
+    meal = get_object_or_404(StandingMeal, pk=pk)
+    if meal.runs.filter(status=StandingMealRun.Status.REGISTERED).exists():
+        messages.error(request, f'La colación programada de {meal.person_name} ya registró colaciones: '
+                                'no se elimina, para conservar su historial. Déjala en pausa o ponle '
+                                'fecha de término.')
+        return redirect('reports:standing_meal_edit', pk=meal.pk)
+    summary = _meal_summary(meal)
+    station = meal.station
+    meal.delete()
+    audit.log('config.colacion_programada', f'Colación programada ELIMINADA: {summary}.',
+              request=request, station=station, level=audit.WARNING)
+    messages.success(request, 'Colación programada eliminada.')
+    return redirect('reports:standing_meal_list')
+
+
+@capability_required('standing_meals')
+@require_POST
+def standing_exception_create(request, pk):
+    meal = get_object_or_404(StandingMeal, pk=pk)
+    form = StandingExceptionForm(request.POST)
+    if form.is_valid():
+        d = form.cleaned_data
+        exc = StandingMealException.objects.create(
+            meal=meal, date_from=d['date_from'], date_to=d['date_to'], reason=d['reason'],
+            created_by_name=request.user.full_name)
+        audit.log('config.colacion_programada',
+                  f'Excepción agregada a la colación programada de {meal.person_name}: '
+                  f'{exc.range_text}, {exc.reason}.',
+                  request=request, station=meal.station, data={'regla_id': meal.pk})
+        messages.success(request, f'Excepción agregada: {exc.range_text}.')
+    else:
+        messages.error(request, 'Revisa la excepción: ' + ' '.join(
+            ' '.join(errs) for errs in form.errors.values()))
+    return redirect('reports:standing_meal_edit', pk=meal.pk)
+
+
+@capability_required('standing_meals')
+@require_POST
+def standing_exception_delete(request, pk, eid):
+    exc = get_object_or_404(StandingMealException, pk=eid, meal_id=pk)
+    audit.log('config.colacion_programada',
+              f'Excepción quitada de la colación programada de {exc.meal.person_name}: '
+              f'{exc.range_text}, {exc.reason}.',
+              request=request, station=exc.meal.station, data={'regla_id': pk})
+    exc.delete()
+    messages.success(request, 'Excepción quitada.')
+    return redirect('reports:standing_meal_edit', pk=pk)
+
+
+@capability_required('standing_meals')
+def holiday_list(request):
+    """Feriados por año: ese día no se registra ninguna colación programada."""
+    today = timezone.localdate()
+    try:
+        year = int(request.GET.get('year') or request.POST.get('year') or today.year)
+    except ValueError:
+        year = today.year
+    form = HolidayForm(request.POST or None)
+    if request.method == 'POST' and form.is_valid():
+        d = form.cleaned_data
+        holiday, created = Holiday.objects.get_or_create(
+            date=d['date'], defaults={'name': d['name'], 'created_by_name': request.user.full_name})
+        if created:
+            audit.log('config.feriado', f'Feriado agregado: {holiday}.', request=request,
+                      data={'fecha': holiday.date.isoformat(), 'nombre': holiday.name})
+            messages.success(request, f'Feriado agregado: {holiday}.')
+        else:
+            messages.warning(request, f'El {holiday.date:%d-%m-%Y} ya estaba registrado como «{holiday.name}».')
+        return redirect(f"{reverse('reports:holiday_list')}?year={d['date'].year}")
+    years = sorted({today.year, today.year + 1} | {d.year for d in Holiday.objects.dates('date', 'year')})
+    return render(request, 'reports/standing/holidays.html', {
+        'form': form,
+        'year': year,
+        'years': years,
+        'holidays': Holiday.objects.filter(date__year=year),
+        'cl_available': year in holidays_cl.available_years(),
+        'today': today,
+    })
+
+
+@capability_required('standing_meals')
+@require_POST
+def holiday_delete(request, pk):
+    holiday = get_object_or_404(Holiday, pk=pk)
+    year = holiday.date.year
+    audit.log('config.feriado', f'Feriado eliminado: {holiday}.', request=request,
+              data={'fecha': holiday.date.isoformat(), 'nombre': holiday.name})
+    holiday.delete()
+    messages.success(request, 'Feriado eliminado.')
+    return redirect(f"{reverse('reports:holiday_list')}?year={year}")
+
+
+@capability_required('standing_meals')
+@require_POST
+def holiday_load_cl(request):
+    try:
+        year = int(request.POST.get('year') or 0)
+    except ValueError:
+        year = 0
+    if year not in holidays_cl.available_years():
+        messages.error(request, f'No hay lista de feriados de Chile para {year or "ese año"}.')
+        return redirect('reports:holiday_list')
+    added = holidays_cl.load_year(year, created_by_name=request.user.full_name)
+    audit.log('config.feriado', f'Feriados legales de Chile {year} cargados: {added} agregados.',
+              request=request, data={'anio': year, 'agregados': added})
+    messages.success(request, f'Feriados de Chile {year}: {added} agregado{"s" if added != 1 else ""}. '
+                              'Revísalos contra el calendario oficial.')
+    return redirect(f"{reverse('reports:holiday_list')}?year={year}")

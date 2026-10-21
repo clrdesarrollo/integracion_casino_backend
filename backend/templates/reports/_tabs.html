@@ -11,6 +11,9 @@
     {% if user.caps.manual_events %}
     <li class="nav-item"><a class="nav-link {% if tab == 'manual' %}active{% endif %}" href="{% url 'reports:manual_event_list' %}"><i class="bi bi-pencil-square"></i> Ingresos manuales</a></li>
     {% endif %}
+    {% if user.caps.standing_meals %}
+    <li class="nav-item"><a class="nav-link {% if tab == 'standing' %}active{% endif %}" href="{% url 'reports:standing_meal_list' %}"><i class="bi bi-alarm"></i> Colaciones programadas</a></li>
+    {% endif %}
     {% if user.caps.report_mail %}
     <li class="nav-item"><a class="nav-link {% if tab == 'mail' %}active{% endif %}" href="{% url 'reports:mail_schedule_list' %}"><i class="bi bi-envelope-paper"></i> Envíos por correo</a></li>
     {% endif %}

@@ -1,0 +1,268 @@
+{% extends 'base.html' %}
+{% block title %}{% if is_new %}Nueva colación programada{% else %}Colación programada · {{ meal.person_name }}{% endif %} · Informes{% endblock %}
+{% block nav_reports %}active{% endblock %}
+
+{% block content %}
+<style>
+  .ev-thumb { width:34px; height:34px; border-radius:50%; object-fit:cover; display:block; flex:0 0 34px; }
+  .ev-thumb-empty { display:flex; align-items:center; justify-content:center;
+                    background:var(--ds-canvas-soft); color:var(--ds-ink-mute); }
+  #personResults { position:absolute; z-index:20; width:100%; max-height:340px; overflow:auto;
+                   box-shadow:0 8px 24px rgba(0,0,0,.12); }
+  #personResults .list-group-item { display:flex; gap:10px; align-items:center; text-align:left; }
+  .person-meta { font-size:12px; color:var(--ds-ink-mute); }
+</style>
+
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+  <h1 class="page-title mb-0"><i class="bi bi-alarm"></i>
+    {% if is_new %}Nueva colación programada{% else %}Colación programada de {{ meal.person_name }}{% endif %}
+    <span class="ds-caption">· {{ station.name }}</span>
+  </h1>
+  <a href="{% url 'reports:standing_meal_list' %}" class="btn btn-outline-secondary btn-sm">← Volver</a>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-7">
+    <div class="card shadow-sm">
+      <div class="card-header">{% if is_new %}La regla{% else %}Editar la regla{% endif %}</div>
+      <div class="card-body">
+        {% if is_new and stations|length > 1 %}
+        <div class="mb-3">
+          <label class="form-label">Estación</label>
+          <select class="form-select" onchange="location.href='{% url 'reports:standing_meal_create' %}?estacion='+this.value">
+            {% for s in stations %}<option value="{{ s.pk }}" {% if s.pk == station.pk %}selected{% endif %}>{{ s.name }}</option>{% endfor %}
+          </select>
+        </div>
+        {% endif %}
+
+        {% if form.non_field_errors %}<div class="alert alert-danger">{% for e in form.non_field_errors %}<div>{{ e }}</div>{% endfor %}</div>{% endif %}
+        <form method="post" id="mealForm" autocomplete="off">
+          {% csrf_token %}
+          <input type="hidden" name="station" value="{{ station.pk }}">
+          {{ form.employee_no }}
+
+          <div class="mb-3">
+            <label class="form-label" for="personSearch">Persona <span class="text-danger">*</span></label>
+            <div class="position-relative">
+              <input type="search" id="personSearch" class="form-control" placeholder="Escribe el nombre o el RUT (con o sin puntos ni dígito verificador)" aria-label="Buscar persona">
+              <div id="personResults" class="list-group" style="display:none"></div>
+            </div>
+            <div class="form-text">De la ficha de HikCentral de la estación. La colación se registra a su nombre y empresa aunque ese día la reciba quien lo reemplace.</div>
+            {% if form.employee_no.errors %}<div class="text-danger small">{{ form.employee_no.errors|striptags }}</div>{% endif %}
+            <div id="personCard" class="border rounded p-3 mt-2" style="display:none"></div>
+          </div>
+
+          <div class="row g-3">
+            <div class="col-md-7">
+              <label class="form-label" for="{{ form.schedule_uid.id_for_label }}">{{ form.schedule_uid.label }} <span class="text-danger">*</span></label>
+              {{ form.schedule_uid }}
+              <div class="form-text">Turno programado en que recibe la colación. Se registra al cierre de ese turno, con la hora de inicio.</div>
+              {% if form.schedule_uid.errors %}<div class="text-danger small">{{ form.schedule_uid.errors|striptags }}</div>{% endif %}
+            </div>
+            <div class="col-md-5">
+              <label class="form-label" for="{{ form.grace_minutes.id_for_label }}">{{ form.grace_minutes.label }}</label>
+              {{ form.grace_minutes }}
+              <div class="form-text">{{ form.grace_minutes.help_text }}</div>
+              {% if form.grace_minutes.errors %}<div class="text-danger small">{{ form.grace_minutes.errors|striptags }}</div>{% endif %}
+            </div>
+
+            <div class="col-12">
+              <label class="form-label">{{ form.weekdays.label }} <span class="text-danger">*</span></label>
+              <div class="d-flex flex-wrap gap-3">
+                {% for cb in form.weekdays %}
+                <div class="form-check">{{ cb.tag }}<label class="form-check-label" for="{{ cb.id_for_label }}">{{ cb.choice_label }}</label></div>
+                {% endfor %}
+              </div>
+              {% if form.weekdays.errors %}<div class="text-danger small">{{ form.weekdays.errors|striptags }}</div>{% endif %}
+            </div>
+
+            <div class="col-md-4">
+              <label class="form-label" for="{{ form.valid_from.id_for_label }}">{{ form.valid_from.label }} <span class="text-danger">*</span></label>
+              {{ form.valid_from }}
+              {% if form.valid_from.errors %}<div class="text-danger small">{{ form.valid_from.errors|striptags }}</div>{% endif %}
+            </div>
+            <div class="col-md-4">
+              <label class="form-label" for="{{ form.valid_to.id_for_label }}">{{ form.valid_to.label }}</label>
+              {{ form.valid_to }}
+              <div class="form-text">{{ form.valid_to.help_text }}</div>
+              {% if form.valid_to.errors %}<div class="text-danger small">{{ form.valid_to.errors|striptags }}</div>{% endif %}
+            </div>
+            <div class="col-md-4 d-flex align-items-end">
+              <div class="form-check form-switch mb-2">{{ form.active }}<label class="form-check-label" for="{{ form.active.id_for_label }}">{{ form.active.label }}</label></div>
+            </div>
+
+            <div class="col-12">
+              <label class="form-label" for="{{ form.note.id_for_label }}">{{ form.note.label }} <span class="text-danger">*</span></label>
+              {{ form.note }}
+              <div class="form-text">{{ form.note.help_text }}</div>
+              {% if form.note.errors %}<div class="text-danger small">{{ form.note.errors|striptags }}</div>{% endif %}
+            </div>
+
+            <div class="col-12 d-flex flex-wrap gap-2 align-items-center">
+              <button type="submit" class="btn btn-primary"><i class="bi bi-check2-circle"></i> Guardar</button>
+              <span class="ds-caption">Los días ya revisados no se vuelven a tocar; la regla rige desde el próximo turno.</span>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div class="card shadow-sm mt-3 border-primary-subtle">
+      <div class="card-body ds-caption">
+        <p class="mb-1"><strong>Cómo funciona:</strong> cuando el terminal informa el cierre del turno elegido, el sistema registra la colación con la hora de inicio del turno, a nombre de la persona y su empresa, marcada como <em>programada</em>. Cuenta como servida en el informe.</p>
+        <p class="mb-1"><strong>No se registra</strong> en feriados, en los días de una excepción, ni si ese día la persona sí tiene colación válida en el turno (marcó, o se le ingresó a mano).</p>
+        <p class="mb-0"><strong>Sin cierre:</strong> si el terminal no informa el cierre pasada la tolerancia, se registra igual sobre el turno abierto; si después llega una marcación suya del terminal para ese servicio, la programada se anula sola. Si el turno nunca se abrió, queda «sin turno» con aviso en la bitácora.</p>
+      </div>
+    </div>
+  </div>
+
+  {% if not is_new %}
+  <div class="col-lg-5">
+    <div class="card shadow-sm mb-3">
+      <div class="card-header">Excepciones <span class="ds-caption fw-normal">— días en que no se registra</span></div>
+      <div class="card-body">
+        <form method="post" action="{% url 'reports:standing_exception_create' meal.pk %}" class="row g-2 align-items-end">
+          {% csrf_token %}
+          <div class="col-4"><label class="form-label ds-micro-cap">{{ exc_form.date_from.label }}</label>{{ exc_form.date_from }}</div>
+          <div class="col-4"><label class="form-label ds-micro-cap">{{ exc_form.date_to.label }}</label>{{ exc_form.date_to }}</div>
+          <div class="col-4"><label class="form-label ds-micro-cap">{{ exc_form.reason.label }}</label>{{ exc_form.reason }}</div>
+          <div class="col-12"><button type="submit" class="btn btn-sm btn-outline-primary"><i class="bi bi-plus-lg"></i> Agregar excepción</button></div>
+        </form>
+      </div>
+      <div class="table-responsive"><table class="table table-sm mb-0 align-middle">
+        <tbody>
+          {% for x in exceptions %}
+          <tr>
+            <td class="text-nowrap">{{ x.range_text }}</td>
+            <td>{{ x.reason }}<div class="ds-caption text-muted">{{ x.created_by_name }}</div></td>
+            <td class="text-end">
+              <form method="post" action="{% url 'reports:standing_exception_delete' meal.pk x.pk %}" class="d-inline">{% csrf_token %}
+                <button type="submit" class="btn btn-sm btn-outline-danger" title="Quitar"><i class="bi bi-x-lg"></i></button>
+              </form>
+            </td>
+          </tr>
+          {% empty %}
+          <tr><td class="text-muted text-center py-3">Sin excepciones. Los feriados valen para todas las reglas y se administran en <a href="{% url 'reports:holiday_list' %}">Feriados</a>.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table></div>
+    </div>
+
+    <div class="card shadow-sm mb-3">
+      <div class="card-header">Historial <span class="ds-caption fw-normal">— últimos {{ runs|length }} día{{ runs|length|pluralize }} revisado{{ runs|length|pluralize }}</span></div>
+      <div class="table-responsive"><table class="table table-sm table-hover mb-0 align-middle">
+        <thead><tr><th>Día</th><th>Resultado</th><th>Detalle</th><th></th></tr></thead>
+        <tbody>
+          {% for r in runs %}
+          <tr>
+            <td class="text-nowrap">{{ r.service_date|date:"D d-m-Y" }}</td>
+            <td>{% include 'reports/standing/_run_badge.html' with run=r %}</td>
+            <td class="small">{{ r.detail }}</td>
+            <td class="text-nowrap">{% if r.shift and user.caps.shifts %}<a href="{% url 'reports:shift_detail' r.shift.pk %}" class="ds-caption">ver turno</a>{% endif %}</td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="4" class="text-muted text-center py-3">Todavía no se ha revisado ningún día.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table></div>
+    </div>
+
+    <div class="card shadow-sm">
+      <div class="card-body d-flex flex-wrap justify-content-between align-items-center gap-2">
+        {% if n_registered %}
+        <span class="ds-caption">Esta regla ya registró {{ n_registered }} colaci{{ n_registered|pluralize:"ón,ones" }}: no se elimina, para conservar el historial. Ponla en pausa o dale fecha de término.</span>
+        {% else %}
+        <span class="ds-caption">Sin colaciones registradas: se puede eliminar.</span>
+        <form method="post" action="{% url 'reports:standing_meal_delete' meal.pk %}" onsubmit="return confirm('¿Eliminar la colación programada de {{ meal.person_name|escapejs }}?');">{% csrf_token %}
+          <button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i> Eliminar</button>
+        </form>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+<script>
+(function () {
+  var input = document.getElementById('personSearch');
+  var results = document.getElementById('personResults');
+  var hidden = document.getElementById('id_employee_no');
+  var card = document.getElementById('personCard');
+  if (!input || !hidden) return;
+  var url = "{% url 'reports:standing_meal_persons' %}?estacion={{ station.pk }}&q=";
+  var timer = null, lastQuery = '', current = null;
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c];
+    });
+  }
+  function thumb(p) {
+    return p.photo_url
+      ? '<img src="' + esc(p.photo_url) + '" alt="" class="ev-thumb">'
+      : '<span class="ev-thumb ev-thumb-empty"><i class="bi bi-person"></i></span>';
+  }
+  function meta(p) {
+    var parts = [p.employee_no, p.company || '(sin empresa)'];
+    if (p.meal_policy) parts.push(p.meal_policy);
+    if (!p.authorized) parts.push('NO autorizada');
+    return parts.join(' · ');
+  }
+  function renderResults(list) {
+    results.innerHTML = '';
+    if (!list.length) results.innerHTML = '<div class="list-group-item text-muted">Sin coincidencias en la ficha de personas.</div>';
+    list.forEach(function (p) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'list-group-item list-group-item-action';
+      b.innerHTML = thumb(p) + '<div><div>' + esc(p.name) + '</div><div class="person-meta">' + esc(meta(p)) + '</div></div>';
+      b.addEventListener('click', function () { select(p); });
+      results.appendChild(b);
+    });
+    results.style.display = '';
+  }
+  function hideResults() { results.style.display = 'none'; }
+  function select(p) {
+    current = p;
+    hidden.value = p.employee_no;
+    input.value = p.name;
+    hideResults();
+    var html = '<div class="d-flex gap-3 align-items-start">' + thumb(p) +
+      '<div class="flex-grow-1"><div class="fw-semibold">' + esc(p.name) + '</div>' +
+      '<div class="person-meta">' + esc(meta(p)) + '</div>';
+    if (p.missing) html += '<div class="text-warning small mt-1"><i class="bi bi-exclamation-triangle"></i> Ya no está en la ficha de la estación; se sigue registrando con este nombre. Para cambiarla, busca otra persona.</div>';
+    html += '</div><button type="button" class="btn btn-sm btn-outline-secondary" id="changePerson">Cambiar</button></div>';
+    card.innerHTML = html;
+    card.style.display = '';
+    document.getElementById('changePerson').addEventListener('click', clear);
+  }
+  function clear() {
+    current = null; hidden.value = ''; input.value = '';
+    card.style.display = 'none'; card.innerHTML = ''; lastQuery = ''; input.focus();
+  }
+  function lookup() {
+    var q = input.value.trim();
+    if (q.length < 2) { hideResults(); return; }
+    if (q === lastQuery) { results.style.display = ''; return; }
+    lastQuery = q;
+    fetch(url + encodeURIComponent(q), {credentials: 'same-origin'})
+      .then(function (r) { return r.ok ? r.json() : {results: []}; })
+      .then(function (data) { if (input.value.trim() === q) renderResults(data.results || []); })
+      .catch(function () {});
+  }
+  input.addEventListener('input', function () {
+    if (current && input.value.trim() !== current.name) { current = null; hidden.value = ''; card.style.display = 'none'; }
+    clearTimeout(timer); timer = setTimeout(lookup, 180);
+  });
+  input.addEventListener('focus', function () { if (results.innerHTML && !current) results.style.display = ''; });
+  input.addEventListener('keydown', function (e) { if (e.key === 'Escape') hideResults(); });
+  document.addEventListener('click', function (e) { if (!results.contains(e.target) && e.target !== input) hideResults(); });
+  document.getElementById('mealForm').addEventListener('submit', function (e) {
+    if (!hidden.value) { e.preventDefault(); input.focus(); }
+  });
+  var selected = {{ selected_json|safe }};
+  if (selected) select(selected);
+})();
+</script>
+{% endblock %}

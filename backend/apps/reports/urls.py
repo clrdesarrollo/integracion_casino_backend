@@ -21,6 +21,21 @@ urlpatterns = [
          name='manual_event_persons'),
     path('ingresos-manuales/<int:pk>/anular/', views.manual_event_annul, name='manual_event_annul'),
 
+    # Colaciones programadas (entrega en mano, sin marcar en el kiosco) y feriados
+    path('colaciones-programadas/', views.standing_meal_list, name='standing_meal_list'),
+    path('colaciones-programadas/nueva/', views.standing_meal_create, name='standing_meal_create'),
+    path('colaciones-programadas/personas/', views.standing_meal_persons, name='standing_meal_persons'),
+    path('colaciones-programadas/<int:pk>/', views.standing_meal_edit, name='standing_meal_edit'),
+    path('colaciones-programadas/<int:pk>/alternar/', views.standing_meal_toggle, name='standing_meal_toggle'),
+    path('colaciones-programadas/<int:pk>/eliminar/', views.standing_meal_delete, name='standing_meal_delete'),
+    path('colaciones-programadas/<int:pk>/excepciones/', views.standing_exception_create,
+         name='standing_exception_create'),
+    path('colaciones-programadas/<int:pk>/excepciones/<int:eid>/eliminar/', views.standing_exception_delete,
+         name='standing_exception_delete'),
+    path('feriados/', views.holiday_list, name='holiday_list'),
+    path('feriados/<int:pk>/eliminar/', views.holiday_delete, name='holiday_delete'),
+    path('feriados/cargar-chile/', views.holiday_load_cl, name='holiday_load_cl'),
+
     # Envíos por correo: el informe en PDF cada cierto tiempo, su historial y el servidor SMTP
     path('envios/', views.mail_schedule_list, name='mail_schedule_list'),
     path('envios/nuevo/', views.mail_schedule_create, name='mail_schedule_create'),

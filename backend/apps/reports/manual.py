@@ -34,7 +34,9 @@ from django.db.models import Q
 from django.utils import timezone
 
 from backend.apps.core import audit
-from backend.apps.core.models import AccessEvent, Person, Shift, ShiftSchedule, Visit, new_uid
+from backend.apps.core.models import (
+    AccessEvent, Person, Shift, ShiftSchedule, StandingMealRun, Visit, new_uid,
+)
 
 #: Texto con el que el ingreso manual figura como «método» en las marcaciones.
 MANUAL_METHOD = 'Manual (backoffice)'
@@ -157,11 +159,11 @@ def person_checks(shift, person, served, schedule=None):
     return {'blocked': blocked, 'warnings': warnings}
 
 
-def search_persons(shift, query, limit=12):
+def match_persons(station, query, limit=12):
     """
-    Personas de la estación que calzan con lo escrito: por nombre (sin tildes ni
-    mayúsculas, todas las palabras) o por número / RUT (con o sin puntos, guion y dígito
-    verificador). Cada una viene con sus avisos y bloqueos respecto del turno.
+    Personas de la ficha de la estación que calzan con lo escrito: por nombre (sin tildes
+    ni mayúsculas, todas las palabras) o por número / RUT (con o sin puntos, guion y dígito
+    verificador). Nunca tarjetas de visita.
     """
     query = ' '.join((query or '').split())
     if len(query) < 2:
@@ -171,7 +173,7 @@ def search_persons(shift, query, limit=12):
     by_number = bool(re.fullmatch(r'[\d.\s-]*\d[\d.\s-]*[kK]?', query))
     words = [fold(w) for w in query.split()]
 
-    persons = list(shift.station.persons.exclude(user_type='visitor').order_by('name', 'employee_no'))
+    persons = list(station.persons.exclude(user_type='visitor').order_by('name', 'employee_no'))
     found = []
     for p in persons:
         if by_number:
@@ -186,7 +188,17 @@ def search_persons(shift, query, limit=12):
         found.append(p)
         if len(found) >= limit:
             break
+    return found
 
+
+def search_persons(shift, query, limit=12):
+    """
+    Personas de la estación que calzan con lo escrito (ver `match_persons`), cada una con
+    sus avisos y bloqueos respecto del turno.
+    """
+    found = match_persons(shift.station, query, limit)
+    if not found:
+        return []
     served = served_in_service(shift)
     schedule = schedule_of(shift)
     out = []
@@ -411,7 +423,10 @@ def register_manual_visitor_event(shift, visitor, clock, reason, user, *, overri
 
 
 def annul_manual_event(event, reason, user, request=None):
-    """Anula un ingreso manual: la fila queda, deja de contar, y se anota quién y por qué."""
+    """
+    Anula una colación nacida en el backoffice (ingreso manual o programada): la fila
+    queda, deja de contar, y se anota quién y por qué.
+    """
     reason = ' '.join((reason or '').split())
     if len(reason) < 5:
         raise ManualEntryError('Indica el motivo de la anulación.')
@@ -420,9 +435,9 @@ def annul_manual_event(event, reason, user, request=None):
         # (LEFT JOIN) y PostgreSQL no admite FOR UPDATE sobre el lado nulo de un outer join.
         event = (AccessEvent.objects.select_for_update(of=('self',))
                  .select_related('station', 'shift', 'visit').get(pk=event.pk))
-        if not event.is_manual:
-            raise ManualEntryError('Solo se pueden anular las colaciones ingresadas a mano; las '
-                                   'marcaciones del terminal no se tocan.')
+        if not event.is_backoffice:
+            raise ManualEntryError('Solo se pueden anular las colaciones ingresadas a mano o '
+                                   'programadas; las marcaciones del terminal no se tocan.')
         if event.is_annulled:
             raise ManualEntryError('Esa colación ya estaba anulada.')
         event.status = AccessEvent.Status.ANULADO
@@ -439,9 +454,15 @@ def annul_manual_event(event, reason, user, request=None):
             visit.used_shift_name = ''
             visit.notes = f'{visit.notes} Colación ANULADA: {reason}'.strip()[:300]
             visit.save(update_fields=['used_at', 'used_shift_name', 'notes'])
+        if event.is_scheduled:
+            # el historial de la regla muestra el día como anulado
+            StandingMealRun.objects.filter(event=event).update(
+                status=StandingMealRun.Status.ANNULLED,
+                detail=f'Anulada por {user.full_name}: {reason}'[:300], updated_at=timezone.now())
+        kind = 'programada' if event.is_scheduled else 'ingresada a mano'
         audit.log(
             'colacion.anulada',
-            f'Colación ingresada a mano ANULADA: {event.person_name or event.employee_no} '
+            f'Colación {kind} ANULADA: {event.person_name or event.employee_no} '
             f'({"visita sin tarjeta" if event.is_visitor else event.employee_no}) '
             f'en el turno {event.shift.name if event.shift else "—"} '
             f'a las {timezone.localtime(event.event_time):%d-%m-%Y %H:%M:%S}. '
@@ -455,8 +476,8 @@ def annul_manual_event(event, reason, user, request=None):
 
 
 def manual_events_of(shift):
-    """Ingresos manuales del turno (válidos y anulados), en orden de hora."""
-    return list(shift.events.filter(origin=AccessEvent.Origin.BACKOFFICE)
+    """Colaciones del turno nacidas en el backoffice, a mano o programadas (válidas y anuladas)."""
+    return list(shift.events.filter(origin__in=AccessEvent.BACKOFFICE_ORIGINS)
                 .select_related('visit').defer('photo').order_by('event_time', 'pk'))
 
 

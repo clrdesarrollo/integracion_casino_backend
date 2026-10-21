@@ -19,6 +19,7 @@ from backend.apps.core.models import (
     AccessEvent, AuditLog, Person, PersonPhoto, Shift, Station, StationAPIKey, Visit,
 )
 from backend.apps.realtime.broadcast import broadcast_events
+from backend.apps.reports import standing
 
 logger = logging.getLogger(__name__)
 
@@ -240,6 +241,7 @@ class SyncView(APIView):
                   'events': {'created': 0, 'updated': 0}}
         created_events = []  # solo las marcaciones nuevas se difunden al monitor en vivo
         photos_needed = []   # personas cuya foto el terminal tiene y aquí falta o es otra
+        reported_shifts = []  # turnos nuevos o recién cerrados: aplican colaciones programadas
 
         with transaction.atomic():
             for p in data['persons']:
@@ -310,6 +312,10 @@ class SyncView(APIView):
                 )
                 result['shifts']['created' if created else 'updated'] += 1
                 _log_shift_changes(station, shift_obj, created, previous, received_at)
+                closed_now = (shift_obj.ended_at is not None
+                              and (created or previous is None or previous.get('ended_at') is None))
+                if created or closed_now:
+                    reported_shifts.append(shift_obj.pk)
 
             # Mapas de turnos de la estación para resolver la FK de los eventos: por uid
             # (preferente) y por remote_id (terminales antiguos).
@@ -377,6 +383,13 @@ class SyncView(APIView):
             transaction.on_commit(
                 lambda: broadcast_events(created_events, station.name),
             )
+        # Colaciones programadas: se aplican sobre los turnos recién informados, y una
+        # marcación del terminal anula la programada del mismo servicio (nunca rompen la ingesta).
+        if reported_shifts:
+            transaction.on_commit(lambda: standing.on_shifts_reported(reported_shifts))
+        if created_events:
+            event_ids = [e.pk for e in created_events]
+            transaction.on_commit(lambda: standing.on_terminal_events(event_ids))
 
         body = {'validate': True, 'message': 'Sincronización realizada', 'result': result}
         if config_out is not None:

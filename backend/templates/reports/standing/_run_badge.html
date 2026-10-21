@@ -1,0 +1,6 @@
+{% if run.status == 'registrada' %}<span class="badge bg-success" title="{{ run.detail }}">Registrada</span>
+{% elif run.status == 'pendiente' %}<span class="badge bg-warning text-dark" title="{{ run.detail }}">Pendiente</span>
+{% elif run.status == 'omitida' %}<span class="badge bg-secondary" title="{{ run.detail }}">Omitida</span>
+{% elif run.status == 'sin_turno' %}<span class="badge bg-danger" title="{{ run.detail }}">Sin turno</span>
+{% elif run.status == 'anulada' %}<span class="badge bg-dark" title="{{ run.detail }}">Anulada</span>
+{% else %}<span class="badge bg-light text-dark">{{ run.get_status_display }}</span>{% endif %}

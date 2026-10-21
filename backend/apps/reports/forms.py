@@ -168,6 +168,144 @@ class AnnulEventForm(forms.Form):
         return ' '.join(self.cleaned_data['reason'].split())
 
 
+class StandingMealForm(forms.Form):
+    """
+    Alta/edición de una colación programada. La persona se elige desde la búsqueda en la
+    ficha de la estación (va su nº en el campo oculto); el turno, de los programados de la
+    estación con marcación. Los días van como casillas y se guardan como máscara.
+    """
+
+    employee_no = forms.CharField(widget=forms.HiddenInput())
+    schedule_uid = forms.ChoiceField(label='Turno', widget=forms.Select(attrs=_SELECT))
+    weekdays = forms.MultipleChoiceField(
+        label='Días', choices=[(str(i), n.capitalize()) for i, n in enumerate(DAY_NAMES_LONG)],
+        widget=forms.CheckboxSelectMultiple(attrs={'class': 'form-check-input'}),
+        error_messages={'required': 'Marca al menos un día.'})
+    valid_from = forms.DateField(
+        label='Vigente desde', widget=forms.DateInput(attrs={**_INPUT, 'type': 'date'}, format='%Y-%m-%d'))
+    valid_to = forms.DateField(
+        label='Vigente hasta', required=False,
+        widget=forms.DateInput(attrs={**_INPUT, 'type': 'date'}, format='%Y-%m-%d'),
+        help_text='En blanco: sin fecha de término.')
+    grace_minutes = forms.IntegerField(
+        label='Tolerancia sin cierre (minutos)', min_value=0, max_value=720,
+        widget=forms.NumberInput(attrs={**_INPUT, 'min': 0, 'max': 720}),
+        help_text='Si el terminal no informa el cierre del turno, se registra igual pasados estos '
+                  'minutos desde el término programado más la prórroga de cierre de la estación.')
+    note = forms.CharField(
+        label='Motivo', min_length=10, max_length=300,
+        widget=forms.Textarea(attrs={**_INPUT, 'rows': 2,
+                                     'placeholder': 'Ej: cubre turno de 8 a 20 lejos del casino; '
+                                                    'la once se la lleva el personal del casino'}),
+        help_text='Queda como motivo en cada colación registrada, en el informe y en la bitácora.')
+    active = forms.BooleanField(
+        label='Activa', required=False,
+        widget=forms.CheckboxInput(attrs={**_CHECK, 'role': 'switch'}))
+
+    def __init__(self, *args, station, instance=None, **kwargs):
+        from django.utils import timezone
+        initial = dict(kwargs.pop('initial', None) or {})
+        if instance is not None:
+            initial.update(
+                employee_no=instance.employee_no, schedule_uid=instance.schedule_uid,
+                weekdays=[str(i) for i in range(7) if instance.days_mask & (1 << i)],
+                valid_from=instance.valid_from, valid_to=instance.valid_to,
+                grace_minutes=instance.grace_minutes, note=instance.note, active=instance.active)
+        else:
+            initial.setdefault('weekdays', ['0', '1', '2', '3'])
+            initial.setdefault('valid_from', timezone.localdate())
+            initial.setdefault('grace_minutes', 60)
+            initial.setdefault('active', True)
+        super().__init__(*args, initial=initial, **kwargs)
+        self.station = station
+        self.instance = instance
+        self.person = None
+        self.schedules = {
+            s.uid: s for s in station.schedules.filter(enabled=True, manual_entry=False).order_by('start_min')
+        }
+        choices = [('', '— Elige el turno —')] + [
+            (uid, f'{s.name} ({s.time_range}) · {s.days_text}') for uid, s in self.schedules.items()]
+        if instance is not None and instance.schedule_uid not in self.schedules:
+            choices.append((instance.schedule_uid,
+                            f'{instance.schedule_name} (ya no existe en la configuración)'))
+        self.fields['schedule_uid'].choices = choices
+
+    def clean_employee_no(self):
+        number = (self.cleaned_data['employee_no'] or '').strip()
+        self.person = self.station.persons.exclude(user_type='visitor').filter(employee_no=number).first()
+        if self.person is None:
+            raise ValidationError('Elige a la persona desde la búsqueda (debe estar en la ficha de '
+                                  'la estación).')
+        return number
+
+    def clean_note(self):
+        return ' '.join(self.cleaned_data['note'].split())
+
+    def clean(self):
+        data = super().clean()
+        start, end = data.get('valid_from'), data.get('valid_to')
+        if start and end and end < start:
+            self.add_error('valid_to', 'La fecha de término no puede ser anterior al inicio.')
+        return data
+
+    def save(self, user):
+        from backend.apps.core.models import StandingMeal
+        d = self.cleaned_data
+        schedule = self.schedules.get(d['schedule_uid'])
+        meal = self.instance
+        if meal is None:
+            meal = StandingMeal(station=self.station,
+                                created_by=user if user.pk else None,
+                                created_by_name=user.full_name)
+        meal.employee_no = self.person.employee_no
+        meal.person_name = self.person.name
+        meal.company = self.person.company or ''
+        meal.schedule_uid = d['schedule_uid']
+        if schedule is not None:
+            meal.schedule_name = schedule.name
+        meal.days_mask = sum(1 << int(i) for i in d['weekdays'])
+        meal.valid_from = d['valid_from']
+        meal.valid_to = d.get('valid_to')
+        meal.grace_minutes = d['grace_minutes']
+        meal.note = d['note']
+        meal.active = bool(d.get('active'))
+        meal.save()
+        return meal
+
+
+class StandingExceptionForm(forms.Form):
+    """Días en que la colación programada no se registra (vacaciones, licencia, un evento)."""
+
+    date_from = forms.DateField(
+        label='Desde', widget=forms.DateInput(attrs={**_INPUT, 'type': 'date'}, format='%Y-%m-%d'))
+    date_to = forms.DateField(
+        label='Hasta', widget=forms.DateInput(attrs={**_INPUT, 'type': 'date'}, format='%Y-%m-%d'))
+    reason = forms.CharField(
+        label='Motivo', max_length=200,
+        widget=forms.TextInput(attrs={**_INPUT, 'placeholder': 'Ej: vacaciones'}))
+
+    def clean(self):
+        data = super().clean()
+        start, end = data.get('date_from'), data.get('date_to')
+        if start and end and end < start:
+            self.add_error('date_to', 'La fecha de término no puede ser anterior al inicio.')
+        return data
+
+    def clean_reason(self):
+        return ' '.join(self.cleaned_data['reason'].split())
+
+
+class HolidayForm(forms.Form):
+    date = forms.DateField(
+        label='Fecha', widget=forms.DateInput(attrs={**_INPUT, 'type': 'date'}, format='%Y-%m-%d'))
+    name = forms.CharField(
+        label='Nombre', max_length=120,
+        widget=forms.TextInput(attrs={**_INPUT, 'placeholder': 'Ej: Día de las Glorias Navales'}))
+
+    def clean_name(self):
+        return ' '.join(self.cleaned_data['name'].split())
+
+
 class ScheduledReportForm(forms.ModelForm):
     """Alta/edición de un envío programado."""
 

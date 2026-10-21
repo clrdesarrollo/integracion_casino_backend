@@ -28,6 +28,11 @@ CAPABILITIES = (
                'marcar en el kiosco (p. ej. un corte de energía). Queda marcada como manual, con '
                'quién la registró y por qué, y se puede anular pero no borrar.',
                'Operación', 'reports:manual_event_list'),
+    Capability('standing_meals', 'Colaciones programadas',
+               'Dentro de Informes: personas a las que se les registra sola la colación de un '
+               'turno ciertos días (se la entregan en mano, sin marcar en el kiosco), con sus '
+               'excepciones y los feriados.',
+               'Operación', 'reports:standing_meal_list'),
     Capability('visits', 'Registro de visitas',
                'Entregar y recibir tarjetas de visita (trámite de mesón).',
                'Visitas', 'webapp:visit_list'),

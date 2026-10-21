@@ -1,0 +1,100 @@
+{% extends 'base.html' %}
+{% block title %}Colaciones programadas · Informes{% endblock %}
+{% block nav_reports %}active{% endblock %}
+
+{% block content %}
+{% with tab='standing' %}{% include 'reports/_tabs.html' %}{% endwith %}
+
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-2">
+  <p class="ds-caption text-muted mb-0" style="max-width:760px">
+    Personas que reciben su colación <strong>en mano</strong>, sin pasar por el kiosco: el sistema la registra solo,
+    al cierre del turno, los días indicados. Se omite en los feriados, en las excepciones de cada regla
+    (vacaciones, licencia) y si ese día la persona sí marcó en el terminal. Cuenta como servida en el informe,
+    marcada como <em>programada</em>.
+  </p>
+  <div class="d-flex gap-2">
+    <a href="{% url 'reports:holiday_list' %}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-calendar-x"></i> Feriados</a>
+    <a href="{% url 'reports:standing_meal_create' %}" class="btn btn-primary btn-sm"><i class="bi bi-plus-lg"></i> Nueva colación programada</a>
+  </div>
+</div>
+
+{% if not scheduler_alive %}
+<div class="alert alert-warning py-2"><i class="bi bi-exclamation-triangle"></i>
+  El servicio programador no ha dado señal de vida en los últimos minutos. Las colaciones se registran igual
+  cuando el terminal informa el cierre del turno, pero sin el programador no corre la tolerancia sin cierre ni
+  la revisión de los días pendientes.
+</div>
+{% endif %}
+
+<div class="card shadow-sm mb-4">
+  <div class="table-responsive">
+    <table class="table table-hover mb-0 align-middle">
+      <thead><tr>
+        <th>Persona</th><th>Turno</th><th>Días</th><th>Vigencia</th><th>Motivo</th><th>Último día</th>
+        <th class="text-end">Acciones</th>
+      </tr></thead>
+      <tbody>
+        {% for m in meals %}
+        <tr class="{% if not m.active %}text-muted{% endif %}">
+          <td>
+            <span class="fw-semibold">{{ m.person_name }}</span>
+            {% if not m.active %}<span class="badge bg-secondary">en pausa</span>{% endif %}
+            <div class="ds-caption text-muted"><code>{{ m.employee_no }}</code>{% if m.company %} · {{ m.company }}{% endif %}{% if stations|length > 1 %} · {{ m.station.name }}{% endif %}</div>
+            {% if not m.current_person %}<span class="badge text-bg-warning" title="La ficha de HikCentral ya no trae a esta persona; la colación se sigue registrando con el nombre guardado">ya no está en la ficha</span>{% endif %}
+          </td>
+          <td>{{ m.schedule_name }}
+            {% if m.current_schedule %}<div class="ds-caption text-muted">{{ m.current_schedule.time_range }}</div>
+            {% else %}<div><span class="badge text-bg-danger" title="El turno programado ya no existe en la configuración: edita la regla y elige otro">turno eliminado</span></div>{% endif %}
+          </td>
+          <td>{{ m.days_text }}</td>
+          <td class="ds-caption">{{ m.validity_text }}
+            <div class="text-muted">tolerancia {{ m.grace_minutes }} min</div>
+            {% with n=m.exceptions.all|length %}{% if n %}<div class="text-muted">{{ n }} excepci{{ n|pluralize:"ón,ones" }}</div>{% endif %}{% endwith %}
+          </td>
+          <td class="small">{{ m.note }}</td>
+          <td>
+            {% if m.last_run %}{% include 'reports/standing/_run_badge.html' with run=m.last_run %}
+              <div class="ds-caption text-muted">{{ m.last_run.service_date|date:"D d-m-Y" }}</div>
+            {% else %}<span class="text-muted">—</span>{% endif %}
+          </td>
+          <td class="text-end text-nowrap">
+            <a href="{% url 'reports:standing_meal_edit' m.pk %}" class="btn btn-sm btn-outline-secondary" title="Editar, excepciones e historial"><i class="bi bi-pencil"></i></a>
+            <form method="post" action="{% url 'reports:standing_meal_toggle' m.pk %}" class="d-inline">{% csrf_token %}
+              <button type="submit" class="btn btn-sm btn-outline-{% if m.active %}warning{% else %}success{% endif %}" title="{% if m.active %}Poner en pausa{% else %}Activar{% endif %}"><i class="bi bi-{% if m.active %}pause{% else %}play{% endif %}"></i></button>
+            </form>
+          </td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="7" class="text-muted text-center py-4">Aún no hay colaciones programadas.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-header">Qué pasó cada día <span class="ds-caption fw-normal">— desde el {{ since|date:"d-m-Y" }}, {{ runs|length }} día{{ runs|length|pluralize }} revisado{{ runs|length|pluralize }}</span></div>
+  <div class="table-responsive">
+    <table class="table table-sm table-hover mb-0 align-middle">
+      <thead><tr><th>Día</th><th>Persona</th><th>Turno</th><th>Resultado</th><th>Detalle</th><th>Colación</th></tr></thead>
+      <tbody>
+        {% for r in runs %}
+        <tr>
+          <td class="text-nowrap">{{ r.service_date|date:"D d-m-Y" }}</td>
+          <td>{{ r.meal.person_name }}{% if stations|length > 1 %}<div class="ds-caption text-muted">{{ r.meal.station.name }}</div>{% endif %}</td>
+          <td>{{ r.meal.schedule_name }}</td>
+          <td>{% include 'reports/standing/_run_badge.html' with run=r %}</td>
+          <td class="small">{{ r.detail }}</td>
+          <td class="text-nowrap">
+            {% if r.event %}{{ r.event.event_time|date:"H:i:s" }}{% if r.event.is_annulled %} <span class="badge bg-dark">anulada</span>{% endif %}{% endif %}
+            {% if r.shift %}{% if user.caps.shifts %}<a href="{% url 'reports:shift_detail' r.shift.pk %}" class="ds-caption">ver turno</a>{% endif %}{% endif %}
+          </td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="6" class="text-muted text-center py-3">Nada todavía: los días se van anotando a medida que llega su turno.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

@@ -154,6 +154,7 @@ Permisos disponibles (catálogo en `backend/apps/core/access.py`):
 | Turnos, empresas y estaciones | configuración compartida con el kiosco, estaciones y API keys |
 | Usuarios y roles | alta de usuarios y definición de roles |
 | Ingreso manual de colaciones | registrar a mano una colación que el kiosco no pudo marcar (y anularla) |
+| Colaciones programadas | personas a las que se les registra sola la colación de un turno ciertos días (entrega en mano), sus excepciones y los feriados |
 | Bitácora | todo lo que pasa en el sistema, en orden de tiempo |
 
 Vienen tres roles de sistema (se pueden ajustar, no eliminar): **Administrador del sistema**
@@ -350,6 +351,51 @@ con el funcionario sugerido desde la ficha) más la hora y el motivo. Al registr
 
 ---
 
+## Colaciones programadas (entrega en mano)
+
+Hay personas que reciben su colación sin pasar por el kiosco: cubren un turno largo lejos del
+casino y el personal del casino se la lleva en mano. Para no cargar al kiosco con más
+funciones, el backoffice la registra solo. Se administra en **Informes → Colaciones
+programadas** con el permiso **Colaciones programadas** (`standing_meals`), que de partida
+solo tiene el administrador.
+
+Una regla dice **a quién** (persona de la ficha de HikCentral, buscada por nombre o RUT), en
+**qué turno programado**, **qué días** de la semana (por defecto lunes a jueves), desde y
+hasta cuándo, con qué **tolerancia** sin cierre y por qué (el motivo queda en cada colación).
+Cada regla admite **excepciones** por rango de fechas (vacaciones, licencia) y hay una lista
+de **feriados** por año, común a todas las reglas, con un botón para cargar los feriados
+legales de Chile como referencia.
+
+Qué pasa cada día de servicio en que rige la regla (`reports.standing`, tabla
+`tb_standing_meal_run`, una fila por regla y día):
+
+- **Feriado o excepción**: se omite y queda anotado.
+- **La persona sí marcó** (o se le ingresó a mano) en ese servicio: se omite. Nunca se cuenta
+  dos veces.
+- **El terminal informó el cierre del turno**: se registra sobre esa apertura, con la **hora de
+  inicio del turno**, a nombre de la persona y su empresa, con origen `programada`, método
+  «Programada (entrega en mano)» y «Sistema» como quien registra. Es el camino normal.
+- **El turno sigue abierto pasada la tolerancia** (término programado + prórroga de cierre de
+  la estación + minutos de la regla): se registra igual y queda anotado que fue sin cierre.
+  Como el terminal no la conoce, si después llega una marcación suya para ese servicio
+  (también en una reapertura), la programada se **anula sola** con el motivo en la bitácora.
+- **El turno no se abrió**: queda «sin turno» con aviso en la bitácora; si el turno aparece
+  después (el terminal lo tenía guardado), se registra entonces.
+
+Dos disparadores hacen lo mismo: la ingesta del terminal al recibir un turno nuevo o cerrado,
+y el servicio `scheduler` (el mismo de los envíos por correo) en cada ciclo, que además
+revisa los días pendientes de las últimas dos semanas. Si una regla se crea con vigencia en
+el pasado, se aplica hacia atrás dentro de esas dos semanas sobre los turnos ya cerrados.
+
+En el informe la colación programada cuenta como servida (por turno, empresa y persona), suma
+en el indicador **Programadas** y figura en la sección de colaciones ingresadas a mano o
+programadas (pantalla, PDF y Excel); en el detalle del turno lleva la insignia «Programada».
+Se anula desde Ingresos manuales como cualquier colación del backoffice; el historial de la
+regla muestra cada día como registrada, omitida, pendiente, sin turno o anulada. Una regla
+que ya registró colaciones no se elimina: se pausa o se le pone fecha de término.
+
+---
+
 ## Bitácora
 
 El menú **Bitácora** (`/bitacora/`, permiso `audit`, de partida solo el administrador) es el
@@ -360,7 +406,7 @@ estación, nivel y texto. Las entradas no se editan ni se borran (tampoco desde 
 |---|---|
 | Terminal | se conectó o se desconectó del canal de órdenes (`/ws/station/`), volvió a sincronizar tras más de 15 min sin contacto, se enroló, y cada **reinicio** con la última hora en que la app estuvo viva (lo informa el propio terminal) |
 | Turnos | cada apertura y cierre tal como los informa el terminal, con el motivo; un cierre «interrumpido» queda como aviso |
-| Colaciones | ingresos manuales y anulaciones, con persona, hora, motivo y avisos ignorados |
+| Colaciones | ingresos manuales y anulaciones, con persona, hora, motivo y avisos ignorados; colaciones programadas registradas, omitidas, sin turno o anuladas por el sistema |
 | Visitas | tarjeta entregada, devuelta, registro eliminado |
 | Configuración | estaciones, API keys, turnos programados (antes/después), prórroga, modo de pruebas, turnos automáticos, tarjetas de visita, actualización de personas |
 | Usuarios y roles | altas, cambios de rol/estado/contraseña, bajas; permisos agregados y quitados a cada rol |

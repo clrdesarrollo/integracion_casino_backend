@@ -297,8 +297,17 @@ def process_pending(now):
 
 
 def run_scheduler_tick(now=None):
-    """Un ciclo del programador: señal de vida, encolar lo que toca y despachar la cola."""
+    """
+    Un ciclo del programador: señal de vida, encolar lo que toca y despachar la cola. El
+    mismo servicio aplica las colaciones programadas (reports.standing), que no dependen
+    del correo: un error ahí no detiene los envíos ni al revés.
+    """
+    from backend.apps.reports import standing   # import diferido: standing importa manual
     now = now or timezone.now()
     MailSettings.touch_scheduler(now)
+    try:
+        standing.process(now)
+    except Exception:   # noqa: BLE001
+        logger.exception('Error al aplicar las colaciones programadas')
     enqueue_due(now)
     return process_pending(now)

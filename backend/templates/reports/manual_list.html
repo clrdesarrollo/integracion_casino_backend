@@ -58,7 +58,7 @@
 </div>
 
 <div class="card shadow-sm">
-  <div class="card-header">Colaciones ingresadas a mano del {{ d_from|date:"d-m-Y" }} al {{ d_to|date:"d-m-Y" }}
+  <div class="card-header">Colaciones ingresadas a mano o programadas del {{ d_from|date:"d-m-Y" }} al {{ d_to|date:"d-m-Y" }}
     <span class="ds-caption fw-normal">— {{ n_validas }} válida{{ n_validas|pluralize }}{% if n_anuladas %}, {{ n_anuladas }} anulada{{ n_anuladas|pluralize }}{% endif %}</span>
   </div>
   <div class="table-responsive"><table class="table table-sm table-hover mb-0 align-middle">
@@ -76,7 +76,7 @@
         <td class="small">{{ ev.entry_reason }}</td>
         <td>
           {% if ev.is_annulled %}<span class="badge bg-secondary">Anulada</span><div class="ds-caption">{{ ev.annul_note }}</div>
-          {% else %}<span class="badge bg-success">Colación válida</span> <span class="badge bg-info">ingreso manual</span>{% endif %}
+          {% else %}<span class="badge bg-success">Colación válida</span> {% if ev.is_scheduled %}<span class="badge bg-info" title="{{ ev.manual_note }}"><i class="bi bi-alarm"></i> programada</span>{% else %}<span class="badge bg-info">ingreso manual</span>{% endif %}{% endif %}
         </td>
         <td class="text-end">
           {% if not ev.is_annulled %}

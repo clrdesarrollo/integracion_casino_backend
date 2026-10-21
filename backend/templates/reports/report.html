@@ -67,6 +67,9 @@
     <div class="value is-info">{{ data.backoffice }}</div><div class="label">Ingresadas a mano</div>
     {% if data.backoffice %}<a href="#ingresos-manuales" class="stretched-link" aria-label="Ver las colaciones ingresadas a mano"></a>{% endif %}</div></div></div>
   <div class="col"><div class="card stat-card shadow-sm"><div class="card-body">
+    <div class="value is-info">{{ data.programadas }}</div><div class="label">Programadas</div>
+    {% if data.programadas %}<a href="#ingresos-manuales" class="stretched-link" aria-label="Ver las colaciones programadas"></a>{% endif %}</div></div></div>
+  <div class="col"><div class="card stat-card shadow-sm"><div class="card-body">
     <div class="value is-danger">{{ data.no_autorizados }}</div><div class="label">No autorizados</div>
     {% if data.no_autorizados %}<a href="#no-autorizados" class="stretched-link" aria-label="Ver detalle de no autorizados"></a>{% endif %}</div></div></div>
 </div>
@@ -175,8 +178,8 @@
   <!-- Colaciones ingresadas a mano desde el backoffice -->
   <div class="col-12" id="ingresos-manuales">
     <div class="card shadow-sm">
-      <div class="card-header"><i class="bi bi-pencil-square"></i> Colaciones ingresadas a mano
-        <span class="ds-caption fw-normal">— registradas en el backoffice porque el kiosco no pudo marcarlas; cuentan como servidas y figuran en los totales de su turno, empresa y persona</span>
+      <div class="card-header"><i class="bi bi-pencil-square"></i> Colaciones ingresadas a mano o programadas
+        <span class="ds-caption fw-normal">— nacidas en el backoffice: a mano porque el kiosco no pudo marcarlas, o programadas (entrega en mano, las registra el sistema); cuentan como servidas y figuran en los totales de su turno, empresa y persona</span>
       </div>
       <div class="table-responsive"><table class="table table-sm mb-0">
         <thead><tr>
@@ -193,7 +196,7 @@
             <td>{% if ev.is_visitor and not ev.card_no %}<span class="ds-caption">sin tarjeta</span>{% else %}<code>{{ ev.employee_no }}</code>{% endif %}</td>
             <td>{{ ev.company|default:"—" }}</td>
             {% if not station %}<td>{{ ev.station.name }}</td>{% endif %}
-            <td>{{ ev.entered_by_name|default:"—" }}<div class="ds-caption">{{ ev.created_at|date:"d-m-Y H:i" }}</div></td>
+            <td>{{ ev.entered_by_name|default:"—" }}{% if ev.is_scheduled %} <span class="badge bg-info" title="Colación programada: entrega en mano, la registró el sistema"><i class="bi bi-alarm"></i> programada</span>{% endif %}<div class="ds-caption">{{ ev.created_at|date:"d-m-Y H:i" }}</div></td>
             <td class="small">{{ ev.entry_reason|default:"—" }}</td>
           </tr>
           {% empty %}<tr><td colspan="{% if station %}7{% else %}8{% endif %}" class="text-muted text-center py-3">Sin colaciones ingresadas a mano en el período.</td></tr>{% endfor %}

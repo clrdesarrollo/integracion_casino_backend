@@ -577,6 +577,12 @@ class AccessEvent(models.Model):
     class Origin(models.TextChoices):
         TERMINAL = 'terminal', 'Terminal'
         BACKOFFICE = 'backoffice', 'Ingreso manual (backoffice)'
+        # La registró sola el sistema por una colación programada (entrega en mano, sin
+        # marcar en el kiosco): ver `StandingMeal` y `reports.standing`.
+        SCHEDULED = 'programada', 'Colación programada'
+
+    #: Orígenes que nacen en el servidor (no en el terminal): se anulan, nunca se borran.
+    BACKOFFICE_ORIGINS = ('backoffice', 'programada')
 
     #: Estados que el terminal puede informar (el resto son del backoffice).
     TERMINAL_STATUSES = ('Ok', 'Duplicado', 'SinTurno', 'NoAutorizado')
@@ -623,6 +629,10 @@ class AccessEvent(models.Model):
         verbose_name='registrada por')
     entered_by_name = models.CharField('registrada por', max_length=200, blank=True, default='')
     entry_reason = models.CharField('motivo del ingreso manual', max_length=300, blank=True, default='')
+    # Regla de colación programada que la generó (origen «programada»).
+    standing_meal = models.ForeignKey(
+        'StandingMeal', on_delete=models.SET_NULL, blank=True, null=True, related_name='events',
+        verbose_name='colación programada')
     annulled_at = models.DateTimeField('anulada el', blank=True, null=True)
     annulled_by = models.ForeignKey(
         'User', on_delete=models.SET_NULL, blank=True, null=True, related_name='annulled_events',
@@ -668,16 +678,41 @@ class AccessEvent(models.Model):
         return self.origin == self.Origin.BACKOFFICE
 
     @property
+    def is_scheduled(self):
+        """La registró sola el sistema por una colación programada (entrega en mano)."""
+        return self.origin == self.Origin.SCHEDULED
+
+    @property
+    def is_backoffice(self):
+        """Nació en el servidor, a mano o programada: se anula con motivo, nunca se borra."""
+        return self.origin in self.BACKOFFICE_ORIGINS
+
+    @property
+    def origin_text(self):
+        """«terminal», «ingreso manual (backoffice)» o «colación programada», para listas y Excel."""
+        if self.is_scheduled:
+            return 'colación programada'
+        if self.is_manual:
+            return 'ingreso manual (backoffice)'
+        return 'terminal'
+
+    @property
     def is_annulled(self):
         return self.status == self.Status.ANULADO
 
     @property
     def manual_note(self):
-        """«Registrada en el backoffice por X el 08-10-2026 10:15 · Motivo: …» ('' si no es manual)."""
-        if not self.is_manual:
+        """
+        «Registrada en el backoffice por X el 08-10-2026 10:15 · Motivo: …», o «Colación
+        programada: la registró el sistema el … · Motivo: …» ('' si la marcó el terminal).
+        """
+        if not self.is_backoffice:
             return ''
         when = timezone.localtime(self.created_at) if self.created_at else None
-        text = f'Registrada en el backoffice por {self.entered_by_name or "—"}'
+        if self.is_scheduled:
+            text = 'Colación programada (entrega en mano): la registró el sistema'
+        else:
+            text = f'Registrada en el backoffice por {self.entered_by_name or "—"}'
         if when:
             text += f' el {when:%d-%m-%Y %H:%M}'
         if self.entry_reason:
@@ -1167,3 +1202,202 @@ class AuditLog(models.Model):
     def data_items(self):
         """Pares (clave, valor) del detalle, para mostrarlos sin JSON crudo."""
         return [(k, v) for k, v in (self.data or {}).items()]
+
+
+# =====================================================================
+#  Colaciones programadas («entrega en mano»): a una persona de la ficha se le registra
+#  sola la colación de un turno los días indicados, sin que marque en el kiosco; y los
+#  feriados en que no se registra. La lógica vive en `reports.standing`.
+# =====================================================================
+class Holiday(models.Model):
+    """Feriado: ese día no se registra ninguna colación programada. Vale para todas las estaciones."""
+
+    date = models.DateField('fecha', unique=True)
+    name = models.CharField('nombre', max_length=120)
+    created_by_name = models.CharField('creado por', max_length=200, blank=True, default='')
+    created_at = models.DateTimeField('creado', auto_now_add=True)
+
+    class Meta:
+        db_table = 'tb_holiday'
+        verbose_name = 'feriado'
+        verbose_name_plural = 'feriados'
+        ordering = ['date']
+
+    def __str__(self):
+        return f'{self.date:%d-%m-%Y} · {self.name}'
+
+    @classmethod
+    def on(cls, day):
+        """El feriado de ese día, o None."""
+        return cls.objects.filter(date=day).first()
+
+
+#: Días por defecto de una colación programada: lunes a jueves (bits 0..3).
+WEEKDAYS_MON_THU_MASK = 0b0001111
+
+
+class StandingMeal(models.Model):
+    """
+    Colación programada: a `employee_no` se le registra la colación del turno programado
+    `schedule_uid` los días de `days_mask`, dentro de la vigencia, sin pasar por el kiosco
+    (la gente del casino se la entrega en mano). El sistema la registra al CIERRE del turno
+    con la hora de inicio del turno, u, si el cierre no llega, pasada la tolerancia; la
+    omite si es feriado, si cae en una excepción o si ese día la persona sí marcó.
+
+    La persona y el turno se guardan por identificador y como texto: la ficha se reemplaza
+    al resincronizar y la configuración de turnos puede cambiar; la regla debe seguir
+    diciendo a quién y en qué turno. Cada día aplicado queda en `StandingMealRun`.
+    """
+
+    station = models.ForeignKey(Station, on_delete=models.CASCADE, related_name='standing_meals')
+    employee_no = models.CharField('nº empleado', max_length=100)
+    person_name = models.CharField('nombre', max_length=200)
+    company = models.CharField('empresa', max_length=200, blank=True, default='')
+    schedule_uid = models.CharField('uid del turno programado', max_length=40)
+    schedule_name = models.CharField('turno', max_length=120)
+    days_mask = models.PositiveSmallIntegerField('días de la semana', default=WEEKDAYS_MON_THU_MASK)
+    valid_from = models.DateField('vigente desde')
+    valid_to = models.DateField('vigente hasta', blank=True, null=True)
+    active = models.BooleanField('activa', default=True)
+    # Minutos después del término programado del turno (más la prórroga de la estación)
+    # tras los cuales, si el terminal no informó el cierre, se registra igual.
+    grace_minutes = models.PositiveSmallIntegerField('tolerancia sin cierre (min)', default=60)
+    # Por qué recibe la colación así; es lo que queda como motivo en cada marcación.
+    note = models.CharField('motivo', max_length=300)
+    created_by = models.ForeignKey(
+        'User', on_delete=models.SET_NULL, blank=True, null=True, related_name='standing_meals',
+    )
+    created_by_name = models.CharField('creada por', max_length=200, blank=True, default='')
+    created_at = models.DateTimeField('creada', auto_now_add=True)
+    updated_at = models.DateTimeField('actualizada', auto_now=True)
+
+    class Meta:
+        db_table = 'tb_standing_meal'
+        verbose_name = 'colación programada'
+        verbose_name_plural = 'colaciones programadas'
+        ordering = ['station', 'person_name', 'id']
+
+    def __str__(self):
+        return f'{self.person_name} · {self.schedule_name} · {self.days_text}'
+
+    @property
+    def days_text(self):
+        days = [i for i in range(7) if self.days_mask & (1 << i)]
+        if len(days) == 7:
+            return 'todos los días'
+        if not days:
+            return 'ningún día'
+        if days == [0, 1, 2, 3]:
+            return 'lunes a jueves'
+        if days == [0, 1, 2, 3, 4]:
+            return 'lunes a viernes'
+        return ', '.join(DAY_NAMES_SHORT[i] for i in days)
+
+    @property
+    def days_flags(self):
+        return [(i, DAY_NAMES_SHORT[i], bool(self.days_mask & (1 << i))) for i in range(7)]
+
+    @property
+    def validity_text(self):
+        text = f'desde el {self.valid_from:%d-%m-%Y}'
+        if self.valid_to:
+            text += f' hasta el {self.valid_to:%d-%m-%Y}'
+        return text
+
+    def applies_on(self, day):
+        """¿La regla rige ese día? (día de la semana y vigencia; feriados y excepciones aparte)."""
+        if not self.days_mask & (1 << day.weekday()):
+            return False
+        if day < self.valid_from:
+            return False
+        return self.valid_to is None or day <= self.valid_to
+
+    @property
+    def person(self):
+        """La ficha actual de la persona, o None si ya no está en la estación."""
+        return self.station.persons.filter(employee_no=self.employee_no).first()
+
+    @property
+    def schedule(self):
+        """El turno programado actual, o None si se eliminó de la configuración."""
+        return self.station.schedules.filter(uid=self.schedule_uid).first()
+
+    def exception_on(self, day):
+        """La excepción que cubre ese día, o None."""
+        for exc in self.exceptions.all():
+            if exc.covers(day):
+                return exc
+        return None
+
+
+class StandingMealException(models.Model):
+    """Días en que la colación programada no se registra (vacaciones, licencia, un evento)."""
+
+    meal = models.ForeignKey(StandingMeal, on_delete=models.CASCADE, related_name='exceptions')
+    date_from = models.DateField('desde')
+    date_to = models.DateField('hasta')
+    reason = models.CharField('motivo', max_length=200)
+    created_by_name = models.CharField('creada por', max_length=200, blank=True, default='')
+    created_at = models.DateTimeField('creada', auto_now_add=True)
+
+    class Meta:
+        db_table = 'tb_standing_meal_exception'
+        verbose_name = 'excepción de colación programada'
+        verbose_name_plural = 'excepciones de colación programada'
+        ordering = ['-date_from']
+
+    def __str__(self):
+        return f'{self.date_from:%d-%m-%Y} – {self.date_to:%d-%m-%Y} · {self.reason}'
+
+    def covers(self, day):
+        return self.date_from <= day <= self.date_to
+
+    @property
+    def range_text(self):
+        if self.date_from == self.date_to:
+            return f'{self.date_from:%d-%m-%Y}'
+        return f'{self.date_from:%d-%m-%Y} al {self.date_to:%d-%m-%Y}'
+
+
+class StandingMealRun(models.Model):
+    """
+    Qué pasó con la colación programada cada día de servicio: pendiente (el turno sigue
+    abierto o aún no llega su cierre), registrada, omitida (feriado, excepción o la persona
+    marcó), sin turno (ese día el turno no se abrió) o anulada después de registrada.
+    Una fila por regla y día: es lo que impide registrarla dos veces.
+    """
+
+    class Status(models.TextChoices):
+        PENDING = 'pendiente', 'Pendiente'
+        REGISTERED = 'registrada', 'Registrada'
+        SKIPPED = 'omitida', 'Omitida'
+        NO_SHIFT = 'sin_turno', 'Sin turno'
+        ANNULLED = 'anulada', 'Anulada'
+
+    meal = models.ForeignKey(StandingMeal, on_delete=models.CASCADE, related_name='runs')
+    service_date = models.DateField('día de servicio')
+    status = models.CharField('estado', max_length=12, choices=Status.choices, default=Status.PENDING)
+    detail = models.CharField('detalle', max_length=300, blank=True, default='')
+    shift = models.ForeignKey(Shift, on_delete=models.SET_NULL, blank=True, null=True,
+                              related_name='standing_meal_runs')
+    event = models.ForeignKey(AccessEvent, on_delete=models.SET_NULL, blank=True, null=True,
+                              related_name='standing_meal_runs')
+    created_at = models.DateTimeField('creada', auto_now_add=True)
+    updated_at = models.DateTimeField('actualizada', auto_now=True)
+
+    class Meta:
+        db_table = 'tb_standing_meal_run'
+        verbose_name = 'ejecución de colación programada'
+        verbose_name_plural = 'ejecuciones de colación programada'
+        ordering = ['-service_date', '-id']
+        constraints = [
+            models.UniqueConstraint(fields=['meal', 'service_date'], name='uq_standing_meal_run_day'),
+        ]
+
+    def __str__(self):
+        return f'{self.meal_id} · {self.service_date:%d-%m-%Y} · {self.status}'
+
+    @property
+    def is_open(self):
+        """Todavía puede cambiar: espera el cierre del turno o que el turno aparezca."""
+        return self.status in (self.Status.PENDING, self.Status.NO_SHIFT)

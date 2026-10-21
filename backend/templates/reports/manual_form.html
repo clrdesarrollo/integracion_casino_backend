@@ -244,7 +244,7 @@
         <td class="small">{{ ev.entry_reason }}</td>
         <td>
           {% if ev.is_annulled %}<span class="badge bg-secondary">Anulada</span><div class="ds-caption">{{ ev.annul_note }}</div>
-          {% else %}<span class="badge bg-success">Colación válida</span> <span class="badge bg-info">ingreso manual</span>{% endif %}
+          {% else %}<span class="badge bg-success">Colación válida</span> {% if ev.is_scheduled %}<span class="badge bg-info" title="{{ ev.manual_note }}"><i class="bi bi-alarm"></i> programada</span>{% else %}<span class="badge bg-info">ingreso manual</span>{% endif %}{% endif %}
         </td>
         <td class="text-end">
           {% if not ev.is_annulled %}

@@ -146,6 +146,8 @@ class ReportData:
     # (incluidas en `servidas`, y en por_persona / por_empresa como cualquier otra), con su
     # detalle: quién las registró y por qué. Las anuladas no están (no cuentan).
     backoffice: int = 0
+    # Colaciones programadas (entrega en mano, las registra el sistema): van en el mismo detalle
+    programadas: int = 0
     backoffice_detalle: list = field(default_factory=list)   # [AccessEvent]
 
     # Nombres de turno (desayuno, almuerzo, …) presentes en las colaciones servidas,
@@ -223,8 +225,10 @@ def build_report(date_from: datetime, date_to: datetime,
     # turno iniciado descarta la marcación). Las históricas siguen sin sumar a nada.
     data.visitas = sum(1 for e in served if e.is_visitor)
     data.personas_unicas = len({e.employee_no for e in served})
-    data.backoffice_detalle = sorted((e for e in served if e.is_manual), key=lambda e: e.event_time)
-    data.backoffice = len(data.backoffice_detalle)
+    # Nacidas en el backoffice: a mano (el kiosco no pudo marcarlas) y programadas (entrega en mano)
+    data.backoffice_detalle = sorted((e for e in served if e.is_backoffice), key=lambda e: e.event_time)
+    data.backoffice = sum(1 for e in data.backoffice_detalle if e.is_manual)
+    data.programadas = sum(1 for e in data.backoffice_detalle if e.is_scheduled)
 
     # ---- Visitas: a quién se le había entregado la tarjeta en cada colación ----
     visitor_ok = [e for e in served if e.is_visitor]

@@ -50,6 +50,7 @@ def build_excel(data: ReportData, titulo: str) -> bytes:
         ('Visitas (tarjeta)', data.visitas),
         ('Ingreso manual', data.manuales),
         ('Ingresadas a mano (backoffice)', data.backoffice),
+        ('Programadas (entrega en mano)', data.programadas),
         ('No autorizados', data.no_autorizados),
     ]
     for i, (label, val) in enumerate(resumen, start=row + 1):
@@ -130,20 +131,22 @@ def build_excel(data: ReportData, titulo: str) -> bytes:
     # ---- Colaciones ingresadas a mano desde el backoffice ----
     w = sheet_table('Ingresadas a mano',
                     ['Colación', 'Turno', 'Nombre', 'Nº empleado', 'Empresa', 'Estación',
-                     'Registrada por', 'Registrada el', 'Motivo'],
+                     'Origen', 'Registrada por', 'Registrada el', 'Motivo'],
                     [(_local_str(e.event_time, '%d-%m-%Y %H:%M:%S'),
                       e.shift.name if e.shift else '',
                       e.person_name or '(desconocido)',
                       e.employee_no,
                       e.company or '',
                       e.station.name,
+                      e.origin_text,
                       e.entered_by_name or '',
                       _local_str(e.created_at),
                       e.entry_reason or '')
                      for e in data.backoffice_detalle])
     w.set_column(0, 0, 20)
     w.set_column(2, 2, 34)
-    w.set_column(8, 8, 60)
+    w.set_column(6, 6, 26)
+    w.set_column(9, 9, 60)
 
     # ---- No autorizados (con el motivo) ----
     w = sheet_table('No autorizados',
@@ -195,6 +198,8 @@ def build_shift_excel(shift, events) -> bytes:
         ficha.append(('Colaciones válidas', sum(1 for e in events if e.status == 'Ok')))
         ficha.append(('De ellas, ingresadas a mano (backoffice)',
                       sum(1 for e in events if e.status == 'Ok' and e.is_manual)))
+        ficha.append(('De ellas, programadas (entrega en mano)',
+                      sum(1 for e in events if e.status == 'Ok' and e.is_scheduled)))
         ficha.append(('Marcaciones', len(events)))
     for i, (label, value) in enumerate(ficha, start=2):
         ws.write(i, 0, label, f_h)
@@ -215,10 +220,10 @@ def build_shift_excel(shift, events) -> bytes:
         row = [_local_str(e.event_time, '%d-%m-%Y'), _local_str(e.event_time, '%H:%M:%S'),
                e.person_name or e.employee_no, e.employee_no, e.company, e.verify_method,
                e.get_status_display(), 'sí' if e.is_visitor else '', e.detail or '',
-               'ingreso manual (backoffice)' if e.is_manual else 'terminal',
-               e.entered_by_name if e.is_manual else '',
-               _local_str(e.created_at) if e.is_manual else '',
-               e.entry_reason if e.is_manual else '',
+               e.origin_text,
+               e.entered_by_name if e.is_backoffice else '',
+               _local_str(e.created_at) if e.is_backoffice else '',
+               e.entry_reason if e.is_backoffice else '',
                e.annulled_by_name if e.is_annulled else '',
                _local_str(e.annulled_at) if e.is_annulled else '',
                e.annul_reason if e.is_annulled else '']

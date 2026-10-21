@@ -112,6 +112,7 @@ def build_pdf(data: ReportData, titulo: str) -> bytes:
         stat(data.visitas, 'Visitas (tarjeta)', '#3A3A3C'),
         stat(data.manuales, 'Ingreso manual', '#3A3A3C'),
         stat(data.backoffice, 'Ingresadas a mano', '#3A3A3C'),
+        stat(data.programadas, 'Programadas', '#3A3A3C'),
         stat(data.no_autorizados, 'No autorizados', '#C8102E'),
     ]
     # cada tarjeta es una mini-tabla en una columna
@@ -273,11 +274,12 @@ def build_pdf(data: ReportData, titulo: str) -> bytes:
 
     # ---- Colaciones ingresadas a mano desde el backoffice ----
     if data.backoffice_detalle:
-        story.append(Paragraph('Colaciones ingresadas a mano', section))
+        story.append(Paragraph('Colaciones ingresadas a mano o programadas', section))
         story.append(Paragraph(
-            'Registradas en el backoffice porque el kiosco no pudo marcarlas (p. ej. corte de '
-            'energía). Cuentan como servidas y están incluidas en los totales por turno, empresa '
-            'y persona. Se indica quién las registró y por qué.', small))
+            'Nacidas en el backoffice: a mano porque el kiosco no pudo marcarlas (p. ej. corte de '
+            'energía), o programadas (entrega en mano, las registra el sistema). Cuentan como '
+            'servidas y están incluidas en los totales por turno, empresa y persona. Se indica '
+            'quién las registró y por qué.', small))
         story.append(Spacer(1, 2 * mm))
         cell = ParagraphStyle('mcell', parent=styles['Normal'], fontSize=8, leading=10)
         con_estacion = data.station is None
@@ -286,6 +288,8 @@ def build_pdf(data: ReportData, titulo: str) -> bytes:
         rows = []
         for e in data.backoffice_detalle:
             registro = escape(e.entered_by_name or '—')
+            if e.is_scheduled:
+                registro += ' (programada)'
             if e.created_at:
                 registro += f'<br/><font color="#6E6E73">{_local(e.created_at)}</font>'
             row = [_local(e.event_time), Paragraph(escape(e.shift.name if e.shift else '—'), cell),
