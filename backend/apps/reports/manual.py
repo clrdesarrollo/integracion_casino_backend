@@ -26,7 +26,6 @@ visita SIN tarjeta, cerrado y ya utilizado, que respalda la marcación: con él 
 cuenta y la lista como visita, igual que a las que marcaron con tarjeta.
 """
 import re
-import unicodedata
 from datetime import datetime, time, timedelta
 
 from django.db import transaction
@@ -37,6 +36,7 @@ from backend.apps.core import audit
 from backend.apps.core.models import (
     AccessEvent, Person, Shift, ShiftSchedule, StandingMealRun, Visit, new_uid,
 )
+from backend.apps.core.text import digits_of, fold  # noqa: F401 - también se importan desde aquí
 
 #: Texto con el que el ingreso manual figura como «método» en las marcaciones.
 MANUAL_METHOD = 'Manual (backoffice)'
@@ -47,18 +47,6 @@ OLD_SHIFT_DAYS = 31
 
 class ManualEntryError(Exception):
     """El registro no procede; el mensaje es para el usuario."""
-
-
-def fold(text):
-    """Minúsculas y sin tildes, para buscar «munoz» y encontrar «Muñoz»."""
-    text = unicodedata.normalize('NFD', (text or '').lower())
-    return ''.join(ch for ch in text if unicodedata.category(ch) != 'Mn')
-
-
-def digits_of(text):
-    """Solo dígitos (y una K final de RUT): «12.345.678-9» → «123456789»."""
-    raw = ''.join(ch for ch in (text or '').upper() if ch.isdigit() or ch == 'K')
-    return raw
 
 
 def shift_block_reason(shift):
@@ -360,9 +348,10 @@ def register_manual_visitor_event(shift, visitor, clock, reason, user, *, overri
             visitor_name=name,
             visitor_document=(visitor.get('visitor_document') or '').strip(),
             visitor_company=(visitor.get('visitor_company') or '').strip(),
-            host_company=host_company or (host.company if host else ''),
+            # con ficha manda la ficha: su nombre completo (se pudo escribir solo «Michel») y su
+            # empresa (se pudo escribir otra); si no, lo escrito
+            host_company=(host.company or host_company) if host else host_company,
             host_person=host,
-            # con ficha, su nombre completo (se pudo escribir solo «Michel»); si no, el escrito
             host_name=host.name if host else host_name,
             delivered_by=user if user.pk else None,
             delivered_by_name=user.full_name,

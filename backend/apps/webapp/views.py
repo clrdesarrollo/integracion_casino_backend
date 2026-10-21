@@ -20,7 +20,9 @@ from backend.apps.core.models import (
     Visit, VisitorCard,
 )
 from backend.apps.core.access import CAPABILITIES, CAPABILITY_LABELS
+from backend.apps.core.text import fold
 from backend.apps.realtime.broadcast import active_shifts
+from backend.apps.reports.manual import match_persons
 from backend.apps.webapp.permissions import (
     DENIED_MESSAGE, any_capability_required, capability_required,
 )
@@ -362,22 +364,23 @@ def visit_delete(request, pk):
 @any_capability_required('visits', 'manual_events')
 def visit_person_suggest(request):
     """
-    Autocompletado del funcionario visitado: personas de la estación (ficha de HikCentral)
-    cuyo nombre contenga lo escrito, acotadas a la empresa si se indicó.
+    Autocompletado del funcionario visitado: personas de la ficha de la estación cuyo
+    nombre (sin importar tildes) o número calce con lo escrito. La empresa indicada ordena
+    (primero las de esa empresa) pero no excluye: si el funcionario es de otra, igual
+    aparece, marcado, y al elegirlo la pantalla ajusta la empresa a la de su ficha.
     """
     station_id = request.GET.get('estacion') or ''
-    query = ' '.join((request.GET.get('q') or '').split())
+    station = Station.objects.filter(pk=int(station_id)).first() if station_id.isdigit() else None
     company = (request.GET.get('empresa') or '').strip()
-    persons = Person.objects.exclude(user_type='visitor').exclude(name='')
-    if station_id.isdigit():
-        persons = persons.filter(station_id=int(station_id))
-    if company:
-        persons = persons.filter(company__iexact=company)
-    for word in query.split():
-        persons = persons.filter(name__icontains=word)
-    rows = [{'name': p.name, 'company': p.company, 'employee_no': p.employee_no}
-            for p in persons.order_by('name')[:15]]
-    return JsonResponse({'results': rows})
+    persons = match_persons(station, request.GET.get('q', ''), limit=30) if station else []
+    key = fold(company)
+    same = [p for p in persons if fold(p.company) == key] if key else persons
+    others = [p for p in persons if p not in same]
+    rows = [{'name': p.name, 'company': p.company, 'employee_no': p.employee_no,
+             'other_company': bool(key) and p not in same}
+            for p in (same + others)[:15]]
+    return JsonResponse({'results': rows, 'company': company,
+                         'company_matches': len(same) if key else None})
 
 
 @capability_required('visit_cards')

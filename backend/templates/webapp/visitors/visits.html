@@ -217,7 +217,7 @@
   var station = "{{ station.pk }}";
   var timer = null, lastKey = '';
 
-  function fill(rows) {
+  function fill(rows, data) {
     list.innerHTML = '';
     rows.forEach(function (r) {
       var o = document.createElement('option');
@@ -226,9 +226,14 @@
       list.appendChild(o);
     });
     if (hint) {
-      hint.textContent = rows.length
-        ? rows.length + (rows.length === 1 ? ' persona encontrada.' : ' personas encontradas.')
-        : 'Sin coincidencias en la ficha de personas: puedes dejar el nombre escrito igual.';
+      if (!rows.length) {
+        hint.textContent = 'Sin coincidencias en la ficha de personas: puedes dejar el nombre escrito igual.';
+      } else if (data && data.company && data.company_matches === 0) {
+        hint.textContent = rows.length + (rows.length === 1 ? ' persona encontrada' : ' personas encontradas') +
+          ', ninguna de ' + data.company + ': se muestran las de otras empresas.';
+      } else {
+        hint.textContent = rows.length + (rows.length === 1 ? ' persona encontrada.' : ' personas encontradas.');
+      }
     }
   }
 
@@ -241,10 +246,15 @@
     fetch(url + '?' + params.toString(), {credentials: 'same-origin'})
       .then(function (r) { return r.ok ? r.json() : {results: []}; })
       .then(function (data) {
-        fill(data.results || []);
-        // si eligió a alguien y la empresa está vacía, se completa con la de su ficha
-        var match = (data.results || []).filter(function (r) { return r.name === host.value.trim(); });
-        if (match.length === 1 && !company.value.trim() && match[0].company) company.value = match[0].company;
+        var rows = data.results || [];
+        fill(rows, data);
+        // al elegir a alguien, la empresa queda como la de su ficha: manda la ficha
+        var match = rows.filter(function (r) { return r.name === host.value.trim(); });
+        if (match.length === 1 && match[0].company &&
+            company.value.trim().toUpperCase() !== match[0].company.toUpperCase()) {
+          company.value = match[0].company;
+          if (hint) hint.textContent = 'Empresa ajustada a la de su ficha: ' + match[0].company + '.';
+        }
       })
       .catch(function () {});
   }

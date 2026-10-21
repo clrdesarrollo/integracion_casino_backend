@@ -431,6 +431,13 @@ class ManualVisitorTests(TestCase):
         visit = Visit.objects.get()
         self.assertEqual((visit.host_person, visit.host_name, visit.host_company), (None, 'Alguien Externo', ''))
 
+    def test_el_funcionario_se_encuentra_aunque_la_empresa_escrita_sea_otra(self):
+        # se escribió PPE y el gerente es de PTJ, y el nombre sin tildes: manda la ficha
+        self.assertRedirects(self._post(host_company='PPE', host_name='nicolas munoz'), self.url)
+        visit = Visit.objects.get()
+        self.assertEqual((visit.host_person, visit.host_name, visit.host_company),
+                         (self.gerente, 'Nicolás Muñoz', 'PTJ'))
+
     def test_turno_que_no_admite_visitas_pide_confirmacion_expresa(self):
         self.schedule.allow_visitors = False
         self.schedule.save()

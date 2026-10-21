@@ -432,9 +432,11 @@ class VisitForm(forms.Form):
             visitor_name=d['visitor_name'],
             visitor_document=(d.get('visitor_document') or '').strip(),
             visitor_company=(d.get('visitor_company') or '').strip(),
-            host_company=(d.get('host_company') or '').strip() or (host.company if host else ''),
+            # con ficha manda la ficha (nombre completo y empresa); si no, lo escrito
+            host_company=(host.company or (d.get('host_company') or '').strip()) if host
+            else (d.get('host_company') or '').strip(),
             host_person=host,
-            host_name=' '.join((d.get('host_name') or '').split()) or (host.name if host else ''),
+            host_name=host.name if host else ' '.join((d.get('host_name') or '').split()),
             delivered_by=user if user.pk else None,
             delivered_by_name=user.full_name,
             delivered_at=now,

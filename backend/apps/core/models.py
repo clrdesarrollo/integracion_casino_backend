@@ -11,6 +11,7 @@ from rest_framework_api_key.models import AbstractAPIKey
 
 from backend.apps.core.access import CAPABILITIES, CAPABILITY_CODES
 from backend.apps.core.managers import UserManager
+from backend.apps.core.text import fold
 
 
 def new_uid():
@@ -424,22 +425,30 @@ class Person(models.Model):
     @classmethod
     def find_host(cls, station, name, company=''):
         """
-        Ficha del funcionario visitado a partir del nombre escrito (y la empresa, si se
-        indicó): solo si coincide con UNA persona de la estación. Si no, None y la visita
-        queda con el nombre en texto.
+        Ficha del funcionario visitado a partir del nombre escrito: coincidencia exacta o,
+        si no, parcial, sin importar tildes ni mayúsculas, y solo si es UNA persona. La
+        empresa escrita da preferencia (primero se busca entre las de esa empresa) pero no
+        excluye: si el funcionario es de otra, igual se encuentra y manda su ficha. Si no
+        hay coincidencia única, None y la visita queda con el nombre en texto.
         """
-        name = ' '.join((name or '').split())
-        if not name:
+        wanted = fold(' '.join((name or '').split()))
+        if not wanted:
             return None
-        qs = cls.objects.filter(station=station).exclude(user_type='visitor')
-        company = (company or '').strip()
+        persons = list(cls.objects.filter(station=station).exclude(user_type='visitor'))
+
+        def pick(pool):
+            exact = [p for p in pool if fold(p.name) == wanted]
+            if exact:
+                return exact[0] if len(exact) == 1 else None
+            partial = [p for p in pool if wanted in fold(p.name)]
+            return partial[0] if len(partial) == 1 else None
+
+        company = fold((company or '').strip())
         if company:
-            qs = qs.filter(company__iexact=company)
-        exact = list(qs.filter(name__iexact=name)[:2])
-        if len(exact) == 1:
-            return exact[0]
-        partial = list(qs.filter(name__icontains=name)[:2])
-        return partial[0] if len(partial) == 1 else None
+            found = pick([p for p in persons if fold(p.company) == company])
+            if found is not None:
+                return found
+        return pick(persons)
 
 
 class PersonPhoto(models.Model):

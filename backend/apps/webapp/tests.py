@@ -534,9 +534,24 @@ class VisitRegistryTests(TestCase):
         resp = self.client.get('/visitas/funcionarios/', {'estacion': self.station.pk, 'q': 'nico'})
         nombres = [r['name'] for r in resp.json()['results']]
         self.assertEqual(nombres, ['Nicolás Muñoz', 'Nicolás Soto'])
+        # sin tildes también, y la empresa ordena (primero las de esa empresa) pero no excluye
         resp = self.client.get('/visitas/funcionarios/',
-                               {'estacion': self.station.pk, 'q': 'nico', 'empresa': 'ptj'})
-        self.assertEqual([r['name'] for r in resp.json()['results']], ['Nicolás Muñoz'])
+                               {'estacion': self.station.pk, 'q': 'nicolas', 'empresa': 'ptj'})
+        body = resp.json()
+        self.assertEqual([(r['name'], r['other_company']) for r in body['results']],
+                         [('Nicolás Muñoz', False), ('Nicolás Soto', True)])
+        self.assertEqual(body['company_matches'], 1)
+        # el funcionario es de otra empresa que la escrita: igual aparece, y se avisa
+        body = self.client.get('/visitas/funcionarios/',
+                               {'estacion': self.station.pk, 'q': 'soto', 'empresa': 'PTJ'}).json()
+        self.assertEqual([r['name'] for r in body['results']], ['Nicolás Soto'])
+        self.assertEqual(body['company_matches'], 0)
+
+    def test_la_ficha_manda_sobre_la_empresa_y_el_nombre_escritos(self):
+        self._registrar(host_company='PPE', host_name='nicolas munoz')
+        v = Visit.objects.get()
+        self.assertEqual(v.host_person, self.host)
+        self.assertEqual((v.host_company, v.host_name), ('PTJ', 'Nicolás Muñoz'))
 
     def test_solo_el_administrador_borra_un_registro(self):
         self._registrar()
