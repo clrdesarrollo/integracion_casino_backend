@@ -384,8 +384,11 @@ Qué pasa cada día de servicio en que rige la regla (`reports.standing`, tabla
 
 Dos disparadores hacen lo mismo: la ingesta del terminal al recibir un turno nuevo o cerrado,
 y el servicio `scheduler` (el mismo de los envíos por correo) en cada ciclo, que además
-revisa los días pendientes de las últimas dos semanas. Si una regla se crea con vigencia en
-el pasado, se aplica hacia atrás dentro de esas dos semanas sobre los turnos ya cerrados.
+revisa los días pendientes de las últimas dos semanas. Al **guardar** la regla se revisan,
+además, todos sus días pendientes desde «vigente desde», sin ese límite: para cargar las
+colaciones ya entregadas de días anteriores se pone la vigencia en el primer día que
+corresponde y se guarda (el formulario pide confirmación), y se registran sobre los turnos
+que sí se abrieron, con las mismas reglas.
 
 En el informe la colación programada cuenta como servida (por turno, empresa y persona), suma
 en el indicador **Programadas** y figura en la sección de colaciones ingresadas a mano o

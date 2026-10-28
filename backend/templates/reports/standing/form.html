@@ -100,7 +100,7 @@
 
             <div class="col-12 d-flex flex-wrap gap-2 align-items-center">
               <button type="submit" class="btn btn-primary"><i class="bi bi-check2-circle"></i> Guardar</button>
-              <span class="ds-caption">Los días ya revisados no se vuelven a tocar; la regla rige desde el próximo turno.</span>
+              <span class="ds-caption">Al guardar se aplica a los días pendientes desde «Vigente desde», también los pasados. Los días ya revisados no se vuelven a tocar.</span>
             </div>
           </div>
         </form>
@@ -111,7 +111,8 @@
       <div class="card-body ds-caption">
         <p class="mb-1"><strong>Cómo funciona:</strong> cuando el terminal informa el cierre del turno elegido, el sistema registra la colación con la hora de inicio del turno, a nombre de la persona y su empresa, marcada como <em>programada</em>. Cuenta como servida en el informe.</p>
         <p class="mb-1"><strong>No se registra</strong> en feriados, en los días de una excepción, ni si ese día la persona sí tiene colación válida en el turno (marcó, o se le ingresó a mano).</p>
-        <p class="mb-0"><strong>Sin cierre:</strong> si el terminal no informa el cierre pasada la tolerancia, se registra igual sobre el turno abierto; si después llega una marcación suya del terminal para ese servicio, la programada se anula sola. Si el turno nunca se abrió, queda «sin turno» con aviso en la bitácora.</p>
+        <p class="mb-1"><strong>Sin cierre:</strong> si el terminal no informa el cierre pasada la tolerancia, se registra igual sobre el turno abierto; si después llega una marcación suya del terminal para ese servicio, la programada se anula sola. Si el turno nunca se abrió, queda «sin turno» con aviso en la bitácora.</p>
+        <p class="mb-0"><strong>Días anteriores:</strong> para cargar colaciones ya entregadas, pon en «Vigente desde» el primer día que corresponde y guarda: se registran todos los días desde esa fecha en que el turno se abrió, con las mismas reglas de arriba. Si el informe de esos días ya se envió por correo, cambiará.</p>
       </div>
     </div>
   </div>
@@ -258,8 +259,20 @@
   input.addEventListener('focus', function () { if (results.innerHTML && !current) results.style.display = ''; });
   input.addEventListener('keydown', function (e) { if (e.key === 'Escape') hideResults(); });
   document.addEventListener('click', function (e) { if (!results.contains(e.target) && e.target !== input) hideResults(); });
+  // adelantar la vigencia a una fecha pasada registra esos días al guardar: se confirma
+  var validFrom = document.getElementById('{{ form.valid_from.id_for_label }}');
+  var fromBefore = validFrom ? validFrom.value : '';
+  var today = '{% now "Y-m-d" %}';
   document.getElementById('mealForm').addEventListener('submit', function (e) {
-    if (!hidden.value) { e.preventDefault(); input.focus(); }
+    if (!hidden.value) { e.preventDefault(); input.focus(); return; }
+    var from = validFrom ? validFrom.value : '';
+    if (from && from < today && (!fromBefore || from < fromBefore)) {
+      var shown = from.split('-').reverse().join('-');
+      if (!confirm('Se registrarán las colaciones de los días pasados desde el ' + shown +
+                   ' en que el turno se abrió (salvo feriados, excepciones o si la persona marcó). ¿Continuar?')) {
+        e.preventDefault();
+      }
+    }
   });
   var selected = {{ selected_json|safe }};
   if (selected) select(selected);

@@ -17,7 +17,7 @@ from backend.apps.core.models import (
     StandingMealRun, Station,
 )
 from backend.apps.webapp.permissions import capability_required
-from backend.apps.reports import holidays_cl, manual
+from backend.apps.reports import holidays_cl, manual, standing
 from backend.apps.reports.excel import build_excel, build_shift_excel
 from backend.apps.reports.forms import (
     AnnulEventForm, HolidayForm, MailSettingsForm, ManualEventForm, ManualVisitorForm,
@@ -584,6 +584,23 @@ def _meal_summary(meal):
             f'{meal.schedule_name}, {meal.days_text}, {meal.validity_text}')
 
 
+def _catch_up_text(meal):
+    """Aplica la regla a sus días pendientes desde la vigencia; lo revisado, para el mensaje."""
+    done = standing.catch_up(meal)
+    S = StandingMealRun.Status
+    parts = []
+    for status, one, many in ((S.REGISTERED, 'registrada', 'registradas'),
+                              (S.SKIPPED, 'omitida', 'omitidas'),
+                              (S.NO_SHIFT, 'sin turno', 'sin turno')):
+        n = done.get(status, 0)
+        if n:
+            parts.append(f'{n} {one if n == 1 else many}')
+    if not parts:
+        return ''
+    return (f' Días revisados desde el {meal.valid_from:%d-%m-%Y}: {", ".join(parts)} '
+            '(el detalle, en el historial).')
+
+
 @capability_required('standing_meals')
 def standing_meal_list(request):
     """Las reglas, con su ficha y turno actuales, y lo que pasó los últimos 14 días."""
@@ -650,8 +667,9 @@ def standing_meal_create(request):
                   f'Colación programada creada: {_meal_summary(meal)}. Motivo: {meal.note}',
                   request=request, station=station,
                   data={'regla_id': meal.pk, 'numero': meal.employee_no, 'turno': meal.schedule_name})
-        messages.success(request, f'Colación programada de {meal.person_name} creada. Se aplicará '
-                                  'desde el próximo turno que corresponda.')
+        done = _catch_up_text(meal)
+        messages.success(request, f'Colación programada de {meal.person_name} creada.' +
+                         (done or ' Se aplicará desde el próximo turno que corresponda.'))
         return redirect('reports:standing_meal_edit', pk=meal.pk)
     selected = form.person if request.method == 'POST' and form.person is not None else None
     return render(request, 'reports/standing/form.html', {
@@ -675,7 +693,7 @@ def standing_meal_edit(request, pk):
                   f'Motivo: {meal.note}',
                   request=request, station=meal.station,
                   data={'regla_id': meal.pk, 'numero': meal.employee_no, 'turno': meal.schedule_name})
-        messages.success(request, 'Colación programada guardada.')
+        messages.success(request, 'Colación programada guardada.' + _catch_up_text(meal))
         return redirect('reports:standing_meal_edit', pk=meal.pk)
     selected = form.person if (request.method == 'POST' and form.person is not None) else meal.person
     selected_json = (json.dumps(_person_json(selected)) if selected is not None else json.dumps({

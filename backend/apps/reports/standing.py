@@ -25,6 +25,8 @@ Cuándo se registra, por día de servicio:
 Dos disparadores llaman a lo mismo: la ingesta del terminal al recibir un turno nuevo o
 cerrado (`on_shifts_reported`, tras confirmar la transacción) y el servicio programador en
 cada ciclo (`process`), que además revisa los días pendientes de las últimas dos semanas.
+Al guardar la regla se revisan todos sus días pendientes desde la vigencia (`catch_up`), sin
+ese límite: así se cargan las colaciones ya entregadas de días anteriores.
 La marcación nace con origen `programada`, sin usuario («Sistema»), ligada a la regla; se
 anula como un ingreso manual y nunca se borra.
 """
@@ -84,19 +86,20 @@ def shifts_of_day(meal, day):
                 .order_by('started_at', 'pk'))
 
 
-def due_days(meal, schedule, now):
+def due_days(meal, schedule, now, first=None):
     """
-    Días de servicio que la regla debe revisar en este ciclo: los de las últimas dos
-    semanas y hoy en que rige la regla, el turno se sirve y su inicio programado ya pasó.
-    Los días ya resueltos (registrada, omitida, anulada) no se vuelven a mirar.
+    Días de servicio que la regla debe revisar: desde `first` (por defecto, las últimas dos
+    semanas) hasta hoy, en que rige la regla, el turno se sirve y su inicio programado ya
+    pasó. Los días ya resueltos (registrada, omitida, anulada) no se vuelven a mirar.
     """
     today = timezone.localtime(now).date()
-    first = today - timedelta(days=LOOKBACK_DAYS)
+    if first is None:
+        first = today - timedelta(days=LOOKBACK_DAYS)
     final = set(meal.runs.filter(service_date__gte=first)
                 .exclude(status__in=(Status.PENDING, Status.NO_SHIFT))
                 .values_list('service_date', flat=True))
     days = []
-    for offset in range(LOOKBACK_DAYS + 1):
+    for offset in range((today - first).days + 1):
         day = first + timedelta(days=offset)
         if day in final or not meal.applies_on(day) or not schedule.applies_on(day):
             continue
@@ -304,6 +307,28 @@ def process(now=None):
             if run.status == Status.REGISTERED and not before:
                 registered += 1
     return registered
+
+
+def catch_up(meal, now=None):
+    """
+    Aplica la regla a todos sus días pendientes desde «vigente desde», no solo a las dos
+    semanas que mira el programador: con una vigencia en el pasado se cargan las colaciones
+    ya entregadas de días anteriores, con las mismas reglas (feriados, excepciones, si marcó).
+    Se llama al guardar la regla. Devuelve {estado: nº de días revisados ahora}.
+    """
+    now = now or timezone.now()
+    schedule = meal.schedule
+    if not meal.active or schedule is None or not schedule.enabled:
+        return {}
+    done = {}
+    for day in due_days(meal, schedule, now, first=meal.valid_from):
+        try:
+            run = evaluate(meal, day, now, schedule=schedule)
+        except Exception:   # noqa: BLE001 - un día con error no detiene el resto
+            logger.exception('Colación programada %s, día %s: error al aplicarla', meal.pk, day)
+            continue
+        done[run.status] = done.get(run.status, 0) + 1
+    return done
 
 
 def on_shifts_reported(shift_ids, now=None):

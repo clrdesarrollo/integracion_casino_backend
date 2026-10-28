@@ -235,6 +235,34 @@ class StandingMealLogicTests(StandingMealBase):
         resp = self.client.get('/reportes/colaciones-programadas/')
         self.assertContains(resp, 'ya no está en la ficha')
 
+    def test_al_guardar_se_aplican_los_dias_anteriores_sin_el_limite_del_programador(self):
+        # cuatro semanas antes: fuera de los 14 días que revisa el programador
+        old_monday = self.monday - timedelta(weeks=4)
+        old_tuesday, old_wednesday, old_thursday = (old_monday + timedelta(days=i) for i in (1, 2, 3))
+        shift = self._shift(old_monday)
+        self._terminal_mark(self._shift(old_tuesday), old_tuesday)
+        Holiday.objects.create(date=old_thursday, name='Feriado antiguo')
+        self.meal.valid_from = old_monday
+        self.meal.save()
+
+        standing.process()
+        self.assertFalse(self.meal.runs.filter(service_date__lte=old_thursday).exists())
+
+        done = standing.catch_up(self.meal)
+        self.assertEqual((done[Status.REGISTERED], done[Status.SKIPPED]), (1, 2))
+        ev = self._scheduled().get()
+        self.assertEqual((ev.shift, ev.event_time), (shift, shift.started_at))
+        self.assertEqual(self._run(old_monday).status, Status.REGISTERED)
+        self.assertIn('Ya tenía colación válida', self._run(old_tuesday).detail)
+        self.assertEqual(self._run(old_wednesday).status, Status.NO_SHIFT)
+        self.assertIn('Feriado antiguo', self._run(old_thursday).detail)
+
+        # guardar otra vez no duplica nada; una regla en pausa no aplica días
+        self.assertNotIn(Status.REGISTERED, standing.catch_up(self.meal))
+        self.assertEqual(self._scheduled().count(), 1)
+        self.meal.active = False
+        self.assertEqual(standing.catch_up(self.meal), {})
+
     def test_el_programador_de_correos_aplica_las_reglas(self):
         self._shift(self.monday)
         run_scheduler_tick(_at(self.monday, 17, 30))
@@ -362,6 +390,18 @@ class StandingMealViewTests(StandingMealBase):
         meal.refresh_from_db()
         self.assertFalse(meal.active)
         self.assertGreaterEqual(AuditLog.objects.filter(action='config.colacion_programada').count(), 3)
+
+    def test_adelantar_la_vigencia_registra_los_dias_anteriores(self):
+        old_monday = self.monday - timedelta(weeks=4)
+        shift = self._shift(old_monday)
+        resp = self.client.post(f'{self.url}{self.meal.pk}/', self._form(valid_from=old_monday.isoformat()),
+                                follow=True)
+        msgs = [str(m) for m in get_messages(resp.wsgi_request)]
+        self.assertTrue(any(f'Días revisados desde el {old_monday:%d-%m-%Y}: 1 registrada' in m for m in msgs),
+                        msgs)
+        self.assertEqual(self._scheduled().get().shift, shift)
+        self.assertEqual(AuditLog.objects.filter(action='colacion.programada').count(), 1)
+        self.assertContains(resp, 'Días anteriores')
 
     def test_excepciones_e_historial_en_la_edicion(self):
         shift = self._shift(self.monday)
